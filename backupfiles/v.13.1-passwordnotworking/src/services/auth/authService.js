@@ -85,19 +85,10 @@ export async function changeOwnPassword({ currentPassword, newPassword }) {
   await reauthenticateWithCredential(user, credential);
   await updatePassword(user, newPassword);
 
-  try {
-    await update(ref(db, `pccSeating/v1/users/${user.uid}`), {
-      mustChangePassword: false,
-      passwordChangedAt: new Date().toISOString(),
-    });
-  } catch (profileError) {
-    const wrappedError = new Error(
-      "Your Firebase password changed, but the profile flag could not be updated. Publish the v13.2 database rules, then sign in using your NEW password and retry."
-    );
-    wrappedError.code = "pcc/profile-update-failed";
-    wrappedError.cause = profileError;
-    throw wrappedError;
-  }
+  await update(ref(db, `pccSeating/v1/users/${user.uid}`), {
+    mustChangePassword: false,
+    passwordChangedAt: new Date().toISOString(),
+  });
 }
 
 export async function saveOwnAccessProfile({

@@ -44,9 +44,8 @@ export async function signInEmployee(email, password, rememberDevice = false) {
     rememberDevice ? browserLocalPersistence : browserSessionPersistence
   );
 
-  // Set the intended session state before Firebase emits onAuthStateChanged.
-  // The previous implementation set this marker and immediately removed it
-  // for session-only logins, which caused a successful login to sign itself out.
+  const result = await signInWithEmailAndPassword(auth, email.trim(), password);
+
   sessionStorage.setItem(SESSION_ACTIVE_KEY, "true");
 
   if (rememberDevice) {
@@ -55,16 +54,10 @@ export async function signInEmployee(email, password, rememberDevice = false) {
       String(Date.now() + REMEMBER_DAYS * 24 * 60 * 60 * 1000)
     );
   } else {
-    localStorage.removeItem(REMEMBER_UNTIL_KEY);
+    clearRememberedDevice();
   }
 
-  try {
-    return await signInWithEmailAndPassword(auth, email.trim(), password);
-  } catch (error) {
-    // Roll back markers when authentication fails.
-    clearRememberedDevice();
-    throw error;
-  }
+  return result;
 }
 
 export async function signOutEmployee() {
@@ -85,19 +78,10 @@ export async function changeOwnPassword({ currentPassword, newPassword }) {
   await reauthenticateWithCredential(user, credential);
   await updatePassword(user, newPassword);
 
-  try {
-    await update(ref(db, `pccSeating/v1/users/${user.uid}`), {
-      mustChangePassword: false,
-      passwordChangedAt: new Date().toISOString(),
-    });
-  } catch (profileError) {
-    const wrappedError = new Error(
-      "Your Firebase password changed, but the profile flag could not be updated. Publish the v13.2 database rules, then sign in using your NEW password and retry."
-    );
-    wrappedError.code = "pcc/profile-update-failed";
-    wrappedError.cause = profileError;
-    throw wrappedError;
-  }
+  await update(ref(db, `pccSeating/v1/users/${user.uid}`), {
+    mustChangePassword: false,
+    passwordChangedAt: new Date().toISOString(),
+  });
 }
 
 export async function saveOwnAccessProfile({

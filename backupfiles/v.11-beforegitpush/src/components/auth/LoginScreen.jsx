@@ -17,7 +17,6 @@ export default function LoginScreen({ sessionStatus }) {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [rememberDevice, setRememberDevice] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
   const submit = async (event) => {
@@ -26,7 +25,7 @@ export default function LoginScreen({ sessionStatus }) {
     setSubmitting(true);
     setErrorMessage("");
     try {
-      await signInEmployee(email, password, rememberDevice);
+      await signInEmployee(email, password);
     } catch (error) {
       setErrorMessage(getFriendlyAuthError(error));
       setSubmitting(false);
@@ -59,18 +58,13 @@ export default function LoginScreen({ sessionStatus }) {
             </div>
           </label>
 
-          <label className="remember-device-option">
-            <input type="checkbox" checked={rememberDevice} onChange={(event) => setRememberDevice(event.target.checked)} />
-            <span><strong>Remember this trusted device for 15 days</strong><small>Do not use this on shared or public computers.</small></span>
-          </label>
-
           {(errorMessage || profileProblem) && <div className="brand-login-error">{errorMessage || profileProblem}</div>}
           <button type="submit" disabled={submitting} className="brand-login-submit"><LogIn size={17} /> {submitting ? "Signing in…" : "Sign in"}</button>
           <p className="brand-login-caption">Accounts are created and assigned by an authorized administrator.</p>
         </form>
 
         {/* BRAND LOGO LOCATION: replace src/assets/mea-hookipa-pcc-logo.png with the final approved logo file. */}
-        <div className="brand-login-logo brand-login-logo-centered"><img src={brandLogo} alt="Meʻa Hoʻokipa and Polynesian Cultural Center" /></div>
+        <div className="brand-login-logo"><img src={brandLogo} alt="Meʻa Hoʻokipa and Polynesian Cultural Center" /></div>
       </section>
     </main>
   );

@@ -14,8 +14,6 @@ import {
 } from "./services/firebase/realtimeSync";
 import LoginScreen from "./components/auth/LoginScreen";
 import ProfileSetupScreen from "./components/auth/ProfileSetupScreen";
-import PasswordChangeScreen from "./components/auth/PasswordChangeScreen";
-import AccountSecurityModal from "./components/auth/AccountSecurityModal";
 import AppHeader from "./components/layout/AppHeader";
 import ToolSidebar from "./components/layout/ToolSidebar";
 import InspectorPanel from "./components/layout/InspectorPanel";
@@ -1311,8 +1309,6 @@ function GroupPanel({ groups, tables, onAdd, onRemove, canManage }) {
 // ---------- main app ----------
 
 function SeatingWorkspace({ authSession }) {
-  const [accountModalOpen, setAccountModalOpen] = useState(false);
-  const [accountPasswordOpen, setAccountPasswordOpen] = useState(false);
   const [localSnapshot] = useState(() =>
     loadLocalSnapshot(authSession.user.uid, {
       allowLegacyMigration: ["lead", "admin", "developer", "director", "manager", "assistant_manager"].includes(authSession.profile.role),
@@ -2464,7 +2460,6 @@ const toggleAreaEditMode = useCallback(() => {
           setAreaEditMode(false);
         }}
         onSignOut={signOutEmployee}
-        onOpenAccount={() => setAccountModalOpen(true)}
         testingMode
         onRetryCloud={() => retryCloudRef.current?.()}
       />
@@ -2709,15 +2704,6 @@ const toggleAreaEditMode = useCallback(() => {
         </InspectorPanel>
       </main>
 
-      {accountModalOpen && (
-        <AccountSecurityModal
-          profile={authSession.profile}
-          onClose={() => { setAccountModalOpen(false); setAccountPasswordOpen(false); }}
-          showPasswordForm={accountPasswordOpen}
-          onShowPasswordForm={setAccountPasswordOpen}
-        />
-      )}
-
       <WorkspaceFooter
         legend={<SeatingLegend />}
         zoom={zoom}
@@ -2758,10 +2744,6 @@ export default function SeatingLayoutApp() {
 
   if (["missing-profile", "incomplete-profile"].includes(authSession.status)) {
     return <ProfileSetupScreen authSession={authSession} />;
-  }
-
-  if (authSession.status === "password-change-required") {
-    return <PasswordChangeScreen profile={authSession.profile} required />;
   }
 
   if (authSession.status !== "authenticated") {

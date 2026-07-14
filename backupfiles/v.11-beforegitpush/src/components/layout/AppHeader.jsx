@@ -1,4 +1,4 @@
-import { Building2, ChevronDown, ShieldCheck } from "lucide-react";
+import { Building2, ShieldCheck } from "lucide-react";
 
 export default function AppHeader({
   title,
@@ -14,7 +14,6 @@ export default function AppHeader({
   layoutConfig,
   onVenueChange,
   onSignOut,
-  onOpenAccount,
   testingMode = false,
   onRetryCloud,
 }) {
@@ -56,14 +55,14 @@ export default function AppHeader({
             <span><i className={cloudDot} />{cloudLabel}{cloudState === "error" && onRetryCloud ? <button type="button" className="sync-retry-button" onClick={onRetryCloud}>Retry</button> : null}</span>
           </div>
 
-          <button type="button" className="workspace-account-card workspace-account-button" onClick={onOpenAccount}>
+          <div className="workspace-account-card">
             <ShieldCheck size={16} />
             <div>
               <strong>{profile.displayName}</strong>
               <span className="capitalize">{currentRole} · {visibleRestaurants.map((venue) => venue.name).join(", ")}</span>
             </div>
-            <ChevronDown size={16} />
-          </button>
+            <button type="button" onClick={onSignOut}>Sign out</button>
+          </div>
         </div>
       </div>
 
