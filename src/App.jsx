@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { clearLocalSnapshot, loadLocalSnapshot, saveLocalSnapshot } from "./utils/localPersistence";
+import { loadLocalSnapshot, saveLocalSnapshot } from "./utils/localPersistence";
 import {
   getClientId,
   logStatusChange,
@@ -23,7 +23,6 @@ import WorkspaceFooter from "./components/layout/WorkspaceFooter";
 import ActivityPanel from "./components/operations/ActivityPanel";
 import CapacityPanel from "./components/operations/CapacityPanel";
 import VenueDesignerPanel from "./components/designer/VenueDesignerPanel";
-import DailySetupGenerator from "./components/designer/DailySetupGenerator";
 import DailyStaffingPanel from "./components/operations/DailyStaffingPanel";
 import HelpPanel from "./components/operations/HelpPanel";
 import LiveOperationsDashboard from "./components/operations/LiveOperationsDashboard";
@@ -1864,96 +1863,6 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
   }, [activeRid, captureVenueSnapshot, layoutConfig.name]);
 
 
-  const saveLiveNow = useCallback(async () => {
-    if (!permissions.canEditLayout) return;
-    const localPayload = {
-      activeRid,
-      currentRole,
-      tablesByR,
-      serversByR,
-      groupsByR,
-      areasByR,
-      venueOperationsByR,
-      canvasSettingsByR,
-      viewSettingsByRestaurant,
-    };
-    const venueData = {
-      tables,
-      servers,
-      groups,
-      areas,
-      operations: venueOperations,
-      canvas: canvasSettingsByR[activeRid] || {
-        width: RESTAURANT_LAYOUT_CONFIG[activeRid].canvasWidth,
-        height: RESTAURANT_LAYOUT_CONFIG[activeRid].canvasHeight,
-      },
-    };
-
-    try {
-      setSaveState("saving");
-      setCloudState("saving");
-      const savedAt = saveLocalSnapshot(localPayload, authSession.user.uid);
-      await saveVenueToCloud(
-        activeRid,
-        venueData,
-        { uid: authSession.user.uid, clientId, role: currentRole },
-        ["tables", "servers", "groups", "areas", "operations", "canvas"]
-      );
-      const currentParts = {
-        tables: JSON.stringify(venueData.tables || []),
-        servers: JSON.stringify(venueData.servers || []),
-        groups: JSON.stringify(venueData.groups || []),
-        areas: JSON.stringify(venueData.areas || []),
-        operations: JSON.stringify(venueData.operations || {}),
-        canvas: JSON.stringify(venueData.canvas || {}),
-      };
-      lastCloudPartsRef.current[activeRid] = currentParts;
-      lastLocalSignatureRef.current = JSON.stringify(localPayload);
-      setLastSavedAt(savedAt);
-      setLastCloudSavedAt(new Date().toISOString());
-      setSaveState("saved");
-      setCloudState("live");
-      safeSnapshotRef.current = captureVenueSnapshot();
-      window.alert(`${layoutConfig.name} saved locally and to Firebase.`);
-    } catch (error) {
-      console.error("Manual live save failed:", error);
-      setSaveState("error");
-      setCloudState(navigator.onLine ? "error" : "offline");
-      window.alert("Save failed. Check the internet connection and Firebase permissions, then try again.");
-    }
-  }, [activeRid, areas, areasByR, authSession.user.uid, canvasSettingsByR, captureVenueSnapshot, clientId, currentRole, groups, groupsByR, layoutConfig.name, permissions.canEditLayout, servers, serversByR, tables, tablesByR, venueOperations, venueOperationsByR, viewSettingsByRestaurant]);
-
-  const loadLocalLayoutNow = useCallback(() => {
-    const snapshot = loadLocalSnapshot(authSession.user.uid, { allowLegacyMigration: false });
-    if (!snapshot) {
-      window.alert("No local backup was found on this device.");
-      return;
-    }
-    if (!window.confirm(`Load the most recent local ${layoutConfig.name} backup from this device? This replaces the current venue view and will sync afterward.`)) return;
-
-    pushHistory();
-    if (Array.isArray(snapshot.tablesByR?.[activeRid])) setTablesByR((previous) => ({ ...previous, [activeRid]: snapshot.tablesByR[activeRid] }));
-    if (Array.isArray(snapshot.serversByR?.[activeRid])) setServersByR((previous) => ({ ...previous, [activeRid]: snapshot.serversByR[activeRid] }));
-    if (Array.isArray(snapshot.groupsByR?.[activeRid])) setGroupsByR((previous) => ({ ...previous, [activeRid]: snapshot.groupsByR[activeRid] }));
-    if (Array.isArray(snapshot.areasByR?.[activeRid])) setAreasByR((previous) => ({ ...previous, [activeRid]: snapshot.areasByR[activeRid] }));
-    if (snapshot.venueOperationsByR?.[activeRid]) setVenueOperationsByR((previous) => ({ ...previous, [activeRid]: snapshot.venueOperationsByR[activeRid] }));
-    if (snapshot.canvasSettingsByR?.[activeRid]) setCanvasSettingsByR((previous) => ({ ...previous, [activeRid]: snapshot.canvasSettingsByR[activeRid] }));
-    if (snapshot.viewSettingsByRestaurant?.[activeRid]) setViewSettingsByRestaurant((previous) => ({ ...previous, [activeRid]: snapshot.viewSettingsByRestaurant[activeRid] }));
-    clearTableSelection();
-    setSelectedAreaId(null);
-    setAreaEditMode(false);
-    window.alert(`${layoutConfig.name} local backup loaded.`);
-  }, [activeRid, authSession.user.uid, clearTableSelection, layoutConfig.name, pushHistory]);
-
-  const clearLocalBackupNow = useCallback(() => {
-    if (!window.confirm("Clear this user’s local browser backup on this device? Firebase data will not be deleted.")) return;
-    clearLocalSnapshot(authSession.user.uid);
-    setLastSavedAt(null);
-    lastLocalSignatureRef.current = "";
-    window.alert("Local browser backup cleared. Live Firebase data remains safe.");
-  }, [authSession.user.uid]);
-
-
   useEffect(() => {
     const handler = (event) => {
       const target = event.target;
@@ -2469,172 +2378,6 @@ const toggleAreaEditMode = useCallback(() => {
     };
   }, [areas, getNextTableNumber, permissions.canManageTables, pushHistory, requestCanvasExpansion, setTables, tables]);
 
-
-  const generateDailySetupTables = useCallback((config) => {
-    if (!permissions.canManageTables) {
-      return { ok: false, message: "Lead access is required to generate the daily table setup." };
-    }
-
-    const entries = (config.entries || [])
-      .map((entry) => ({
-        capacity: Math.max(1, Math.min(300, Number(entry.capacity) || 0)),
-        count: Math.max(0, Math.min(200, Number(entry.count) || 0)),
-      }))
-      .filter((entry) => entry.capacity > 0 && entry.count > 0);
-
-    const total = entries.reduce((sum, entry) => sum + entry.count, 0);
-    if (!total) return { ok: false, message: "Enter at least one table count before generating." };
-    if (total > 300) return { ok: false, message: "Generate 300 tables or fewer at one time." };
-
-    const replaceExisting = config.replaceExisting !== false;
-    if (replaceExisting && visibleTables.length > 0) {
-      const confirmed = window.confirm(
-        `Replace all ${visibleTables.length} current table${visibleTables.length === 1 ? "" : "s"} in ${layoutConfig.name} with this daily setup? Areas and landmarks will remain.`
-      );
-      if (!confirmed) return { ok: false, message: "Daily setup generation cancelled." };
-    }
-
-    const seatingAreas = areas.filter(
-      (area) => (area.areaKind ?? "seating") === "seating" && !area.hidden
-    );
-    const startingNumber = Math.max(
-      0,
-      Number.isFinite(Number(config.startingNumber))
-        ? Number(config.startingNumber)
-        : replaceExisting
-          ? 1
-          : getNextTableNumber()
-    );
-    const tableType = getTableTypeDefinition(config.tableType || "regular").value;
-    const tableSize = Math.max(28, Math.min(52, Number(config.tableSize) || 34));
-
-    const requestedTables = [];
-    entries.forEach((entry) => {
-      for (let index = 0; index < entry.count; index += 1) {
-        requestedTables.push({ capacity: entry.capacity });
-      }
-    });
-
-    const areaAssignments = new Map();
-    seatingAreas.forEach((area) => areaAssignments.set(area.id, []));
-    requestedTables.forEach((item, index) => {
-      const area = seatingAreas.length ? seatingAreas[index % seatingAreas.length] : null;
-      if (area) areaAssignments.get(area.id).push({ ...item, globalIndex: index });
-    });
-
-    const generated = [];
-    if (seatingAreas.length) {
-      seatingAreas.forEach((area) => {
-        const assigned = areaAssignments.get(area.id) || [];
-        if (!assigned.length) return;
-        const columns = Math.max(1, Math.ceil(Math.sqrt(assigned.length)));
-        const rows = Math.ceil(assigned.length / columns);
-        const usableWidth = Math.max(tableSize, area.w - 24);
-        const usableHeight = Math.max(tableSize, area.h - 38);
-        const stepX = columns > 1
-          ? Math.max(tableSize + 6, Math.min(tableSize + 18, (usableWidth - tableSize) / (columns - 1)))
-          : 0;
-        const stepY = rows > 1
-          ? Math.max(tableSize + 6, Math.min(tableSize + 18, (usableHeight - tableSize) / (rows - 1)))
-          : 0;
-
-        assigned.forEach((item, localIndex) => {
-          const row = Math.floor(localIndex / columns);
-          const column = localIndex % columns;
-          generated.push({
-            id: uid("t"),
-            number: String(startingNumber + item.globalIndex),
-            capacity: item.capacity,
-            zone: area.label,
-            areaId: area.id,
-            type: tableType === "super_ambassadors" ? "super" : "regular",
-            tableType,
-            displaySize: { width: tableSize, height: tableSize },
-            status: "available",
-            statusUpdatedAt: null,
-            serverId: null,
-            guestName: "",
-            guestInitials: "",
-            showTableNumber: true,
-            showServerInitials: true,
-            showGuestName: false,
-            showGuestInitials: false,
-            partySize: null,
-            color: null,
-            groupId: null,
-            parentId: null,
-            childIds: null,
-            pos: {
-              x: Math.max(0, area.x + 12 + column * stepX),
-              y: Math.max(0, area.y + 30 + row * stepY),
-            },
-          });
-        });
-      });
-    } else {
-      const columns = Math.max(1, Math.ceil(Math.sqrt(requestedTables.length)));
-      requestedTables.forEach((item, index) => {
-        generated.push({
-          id: uid("t"),
-          number: String(startingNumber + index),
-          capacity: item.capacity,
-          zone: "Unassigned",
-          areaId: null,
-          type: tableType === "super_ambassadors" ? "super" : "regular",
-          tableType,
-          displaySize: { width: tableSize, height: tableSize },
-          status: "available",
-          statusUpdatedAt: null,
-          serverId: null,
-          guestName: "",
-          guestInitials: "",
-          showTableNumber: true,
-          showServerInitials: true,
-          showGuestName: false,
-          showGuestInitials: false,
-          partySize: null,
-          color: null,
-          groupId: null,
-          parentId: null,
-          childIds: null,
-          pos: {
-            x: 120 + (index % columns) * (tableSize + 18),
-            y: 160 + Math.floor(index / columns) * (tableSize + 18),
-          },
-        });
-      });
-    }
-
-    const generatedNumbers = new Set(generated.map((table) => String(table.number)));
-    if (!replaceExisting) {
-      const existingNumbers = new Set(tables.map((table) => String(table.number)));
-      const duplicate = [...generatedNumbers].find((number) => existingNumbers.has(number));
-      if (duplicate) return { ok: false, message: `Table ${duplicate} already exists. Change the starting table number.` };
-    }
-
-    pushHistory();
-    setTables((previous) => replaceExisting ? generated : [...previous, ...generated]);
-    const ids = generated.map((table) => table.id);
-    setSelectedTableIds(ids);
-    setSelectedTableId(ids.at(-1) || null);
-    setBulkSelectMode(ids.length > 1);
-
-    const farthest = generated.reduce(
-      (result, table) => ({
-        x: Math.max(result.x, table.pos.x + tableSize + 500),
-        y: Math.max(result.y, table.pos.y + tableSize + 500),
-      }),
-      { x: 0, y: 0 }
-    );
-    requestCanvasExpansion(farthest.x, farthest.y);
-
-    return {
-      ok: true,
-      count: generated.length,
-      message: `${generated.length} daily tables generated and highlighted in ${layoutConfig.name}.`,
-    };
-  }, [areas, getNextTableNumber, layoutConfig.name, permissions.canManageTables, pushHistory, requestCanvasExpansion, setTables, tables, visibleTables.length]);
-
   const duplicateAreaWithTables = useCallback((areaId) => {
     if (!permissions.canManageZones || !permissions.canManageTables) {
       return { ok: false, message: "Lead access is required." };
@@ -2838,13 +2581,6 @@ const toggleAreaEditMode = useCallback(() => {
         onOpenAccount={() => setAccountModalOpen(true)}
         testingMode
         onRetryCloud={() => retryCloudRef.current?.()}
-      />
-
-      <DailySetupGenerator
-        venueId={activeRid}
-        venueName={layoutConfig.name}
-        canManage={permissions.canManageTables}
-        onGenerate={generateDailySetupTables}
       />
 
       <main className="workspace-main">
@@ -3061,44 +2797,6 @@ const toggleAreaEditMode = useCallback(() => {
         </ToolSidebar>
 
         <section className="workspace-center" aria-label="Seating floor workspace">
-          <div className="workspace-canvas-toolbar" aria-label="Daily layout actions">
-            <div className="workspace-canvas-toolbar-status">
-              <strong>{layoutConfig.name}</strong>
-              <span>Auto-save is on</span>
-            </div>
-            <div className="workspace-canvas-toolbar-groups">
-              <div className="workspace-canvas-toolbar-group" aria-label="Save and recovery controls">
-                <span>Save & recovery</span>
-                <button type="button" className="primary" onClick={saveLiveNow}>
-                  <Save size={14} /> Save Live
-                </button>
-                <button type="button" onClick={saveDailyLayoutSnapshot}>
-                  <Save size={14} /> Save Snapshot
-                </button>
-                <button type="button" onClick={loadLocalLayoutNow}>Load Local</button>
-                <button type="button" className="warning" onClick={clearLocalBackupNow}>Clear Local</button>
-              </div>
-              <div className="workspace-canvas-toolbar-group" aria-label="Venue layout controls">
-                <span>Venue layout</span>
-                <button type="button" className={areaEditMode ? "active" : ""} onClick={toggleAreaEditMode}>
-                  {areaEditMode ? "Done Editing Areas" : "Edit Areas"}
-                </button>
-                <button type="button" onClick={resetAreas}>Reset Areas</button>
-                <button type="button" className="danger" onClick={clearAllTables}>
-                  <Trash2 size={14} /> Delete All Tables
-                </button>
-              </div>
-              <div className="workspace-canvas-toolbar-group" aria-label="Bulk table controls">
-                <span>Bulk tools</span>
-                <button type="button" className={bulkSelectMode ? "active" : ""} onClick={() => setBulkSelectMode((value) => !value)}>
-                  <MousePointer2 size={14} /> {bulkSelectMode ? "Bulk Select On" : "Bulk Select"}
-                </button>
-                <button type="button" disabled={!selectedTableIds.length} onClick={deleteSelectedTables}>
-                  <Trash2 size={14} /> Delete Selected ({selectedTableIds.length})
-                </button>
-              </div>
-            </div>
-          </div>
           <FloorPlanCanvas
             layoutConfig={layoutConfig}
             areas={areas}

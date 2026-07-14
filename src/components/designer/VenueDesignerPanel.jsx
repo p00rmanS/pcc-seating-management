@@ -68,7 +68,6 @@ export default function VenueDesignerPanel({
   const [form, setForm] = useState({ areaId: selectedAreaId || areas.find((area) => (area.areaKind ?? "seating") === "seating")?.id || "", count: 4, customCount: 12, capacity: 4, startingNumber: 1, tableType: "regular", tableSize: 34, replaceAreaTables: false });
   const [message, setMessage] = useState("");
   const [modal, setModal] = useState(null);
-  const [isGenerating, setIsGenerating] = useState(false);
   const [canvasDraft, setCanvasDraft] = useState({ width: canvasWidth, height: canvasHeight });
 
   useEffect(() => { if (selectedAreaId) setForm((current) => ({ ...current, areaId: selectedAreaId })); }, [selectedAreaId]);
@@ -87,53 +86,14 @@ export default function VenueDesignerPanel({
   const patch = (next) => setForm((current) => ({ ...current, ...next }));
   const effectiveCount = Math.max(1, Math.min(100, Number(form.count) || Number(form.customCount) || 1));
 
-  const runGenerate = async (event) => {
-    event?.preventDefault?.();
-    event?.stopPropagation?.();
-
-    if (isGenerating) return;
-    if (!canManage) {
-      setMessage("Your account does not have permission to generate tables.");
-      return;
-    }
-
-    const targetAreaId = form.areaId || seatingAreas[0]?.id || "";
-    if (!targetAreaId) {
-      setMessage("Create or select a seating area before generating tables.");
-      return;
-    }
-
-    setIsGenerating(true);
-    setMessage("Generating tables…");
-
-    try {
-      const result = await Promise.resolve(
-        onGenerateTables?.({ ...form, areaId: targetAreaId, count: effectiveCount })
-      );
-
-      if (!result) {
-        setMessage("The table generator did not return a result. Please try again.");
-        return;
-      }
-
-      setMessage(
-        result.message ||
-          (result.ok
-            ? `${result.count} tables created in ${result.areaLabel}.`
-            : "Unable to generate tables.")
-      );
-
-      if (result.ok) {
-        patch({ areaId: targetAreaId, startingNumber: result.nextStartingNumber });
-        onSelectArea?.(targetAreaId);
-        if (result.tableIds?.[0]) onSelectTable?.(result.tableIds[0]);
-        setModal({ type: "success", result });
-      }
-    } catch (error) {
-      console.error("Bulk table generation failed:", error);
-      setMessage(`Generator error: ${error?.message || "Unknown error"}`);
-    } finally {
-      setIsGenerating(false);
+  const runGenerate = () => {
+    const result = onGenerateTables?.({ ...form, count: effectiveCount });
+    setModal(null);
+    setMessage(result?.message || (result?.ok ? `${result.count} tables created.` : "Unable to generate tables."));
+    if (result?.ok) {
+      patch({ startingNumber: result.nextStartingNumber });
+      if (result.tableIds?.[0]) onSelectTable?.(result.tableIds[0]);
+      setModal({ type: "success", result });
     }
   };
 
@@ -207,20 +167,7 @@ export default function VenueDesignerPanel({
         </div>
         <label className="designer-check-row"><input type="checkbox" checked={form.replaceAreaTables} onChange={(event) => patch({ replaceAreaTables: event.target.checked })} />Replace existing unsplit tables in this area</label>
         <div className="designer-preview-card"><span>Area</span><strong>{selectedArea?.label || "Not selected"}</strong><span>Tables</span><strong>{effectiveCount}</strong><span>Capacity</span><strong>{form.capacity} each</strong></div>
-        <div className="designer-generate-action">
-          <button
-            type="button"
-            className="workspace-primary-action"
-            disabled={isGenerating}
-            onClick={runGenerate}
-          >
-            <Grid3X3 size={14} />
-            {isGenerating ? "Generating…" : `Generate ${effectiveCount} tables now`}
-          </button>
-          {!form.areaId && seatingAreas.length > 0 && (
-            <small>The first seating area will be selected automatically.</small>
-          )}
-        </div>
+        <div className="designer-sticky-action"><button type="button" className="workspace-primary-action" disabled={!canManage || !form.areaId} onClick={runGenerate}><Grid3X3 size={14} /> Generate {effectiveCount} tables now</button></div>
       </section>
 
       <section className="designer-section">
