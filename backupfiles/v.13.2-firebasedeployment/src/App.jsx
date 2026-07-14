@@ -55,7 +55,6 @@ import {
   CircleHelp,
   LayoutDashboard,
   FlaskConical,
-  Save,
 } from "lucide-react";
 
 /* ============================================================
@@ -135,8 +134,8 @@ const RESTAURANT_LAYOUT_CONFIG = {
   },
   gateway: {
     name: "Gateway",
-    canvasWidth: 24000,
-    canvasHeight: 14000,
+    canvasWidth: 11000,
+    canvasHeight: 7000,
     minZoom: 0.25,
     maxZoom: 2,
     defaultZoom: 0.45,
@@ -708,7 +707,7 @@ function TableChip({
   const onPointerUp = (e) => {
     const d = dragRef.current;
     if (canDrag) e.currentTarget.releasePointerCapture(e.pointerId);
-    if (!d.moved) onSelect(table.id, e);
+    if (!d.moved) onSelect(table.id);
     dragRef.current.dragging = false;
   };
   const onContextMenu = (e) => {
@@ -1089,7 +1088,6 @@ function FloorPlanCanvas({
   servers,
   groups,
   selectedId,
-  selectedIds = [],
   onSelect,
   onMove,
   permissions,
@@ -1179,7 +1177,7 @@ function FloorPlanCanvas({
                   table={table}
                   server={serverById.get(table.serverId)}
                   group={groupById.get(table.groupId)}
-                  isSelected={selectedId === table.id || selectedIds.includes(table.id)}
+                  isSelected={selectedId === table.id}
                   onSelect={onSelect}
                   onMove={onMove}
                   canvasWidth={canvasWidth}
@@ -1417,7 +1415,6 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     if (!authorizedVenueIds.includes(activeRid)) {
       setActiveRid(authorizedVenueIds[0]);
       setSelectedTableId(null);
-      setSelectedTableIds([]);
       setSelectedAreaId(null);
       setAreaEditMode(false);
     }
@@ -1497,8 +1494,6 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     setViewSettingsByRestaurant((prev) => ({ ...prev, [activeRid]: { ...prev[activeRid], zoom: z } }));
 
   const [selectedTableId, setSelectedTableId] = useState(null);
-  const [selectedTableIds, setSelectedTableIds] = useState([]);
-  const [bulkSelectMode, setBulkSelectMode] = useState(false);
   const [activeTool, setActiveTool] = useState("tables");
   const [quickTableType, setQuickTableType] = useState("regular");
   const [customQuickCapacity, setCustomQuickCapacity] = useState(16);
@@ -1772,6 +1767,16 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     if (window.confirm("Restore the most recent safe snapshot for this venue?")) restoreVenueSnapshot(safeSnapshotRef.current);
   }, [restoreVenueSnapshot]);
 
+  useEffect(() => {
+    const handler = (event) => {
+      const target = event.target;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") { event.preventDefault(); redo(); }
+    };
+    window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
+  }, [undo, redo]);
+
   const setTables = useCallback(
     (updater) =>
       setTablesByR((prev) => ({
@@ -1781,111 +1786,6 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     [activeRid]
   );
 
-  const visibleTables = useMemo(
-    () => tables.filter((table) => !(table.childIds && table.childIds.length)),
-    [tables]
-  );
-
-  const selectTable = useCallback((id, event) => {
-    const additive = bulkSelectMode || event?.ctrlKey || event?.metaKey || event?.shiftKey;
-    if (!id) {
-      setSelectedTableId(null);
-      setSelectedTableIds([]);
-      return;
-    }
-    if (additive) {
-      setSelectedTableIds((previous) => {
-        const exists = previous.includes(id);
-        const next = exists ? previous.filter((tableId) => tableId !== id) : [...previous, id];
-        setSelectedTableId(next.includes(id) ? id : next.at(-1) || null);
-        return next;
-      });
-      return;
-    }
-    setSelectedTableId(id);
-    setSelectedTableIds([id]);
-  }, [bulkSelectMode]);
-
-  const clearTableSelection = useCallback(() => {
-    setSelectedTableId(null);
-    setSelectedTableIds([]);
-  }, []);
-
-  const selectAllTables = useCallback(() => {
-    const ids = visibleTables.map((table) => table.id);
-    setSelectedTableIds(ids);
-    setSelectedTableId(ids.at(-1) || null);
-  }, [visibleTables]);
-
-  const applyBulkTablePatch = useCallback((patch) => {
-    if (!permissions.canManageTables || selectedTableIds.length === 0) return;
-    pushHistory();
-    const selected = new Set(selectedTableIds);
-    setTables((previous) => previous.map((table) => selected.has(table.id) ? { ...table, ...patch } : table));
-  }, [permissions.canManageTables, pushHistory, selectedTableIds, setTables]);
-
-  const deleteSelectedTables = useCallback(() => {
-    if (!permissions.canDeleteTables || selectedTableIds.length === 0) return;
-    const selected = new Set(selectedTableIds);
-    const splitChildSelected = tables.some((table) => selected.has(table.id) && table.parentId);
-    if (splitChildSelected) {
-      window.alert("Merge split tables before deleting their individual parts.");
-      return;
-    }
-    if (!window.confirm(`Delete ${selectedTableIds.length} selected table${selectedTableIds.length === 1 ? "" : "s"}?`)) return;
-    pushHistory();
-    setTables((previous) => previous.filter((table) => !selected.has(table.id) && !selected.has(table.parentId)));
-    clearTableSelection();
-  }, [clearTableSelection, permissions.canDeleteTables, pushHistory, selectedTableIds, setTables, tables]);
-
-  const clearAllTables = useCallback(() => {
-    if (!permissions.canDeleteTables) return;
-    if (!window.confirm(`Delete ALL tables from ${layoutConfig.name}? Areas and landmarks will remain.`)) return;
-    pushHistory();
-    setTables([]);
-    clearTableSelection();
-  }, [clearTableSelection, layoutConfig.name, permissions.canDeleteTables, pushHistory, setTables]);
-
-  const saveDailyLayoutSnapshot = useCallback(() => {
-    const snapshot = captureVenueSnapshot();
-    safeSnapshotRef.current = snapshot;
-    try {
-      localStorage.setItem(`pcc-seating-manual-snapshot:${activeRid}`, JSON.stringify({
-        savedAt: new Date().toISOString(),
-        venueId: activeRid,
-        snapshot,
-      }));
-      window.alert(`${layoutConfig.name} layout saved as a manual recovery snapshot.`);
-    } catch (error) {
-      console.error("Unable to save manual layout snapshot:", error);
-      window.alert("The layout is still auto-saving, but the manual recovery snapshot could not be stored.");
-    }
-  }, [activeRid, captureVenueSnapshot, layoutConfig.name]);
-
-
-  useEffect(() => {
-    const handler = (event) => {
-      const target = event.target;
-      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") { event.preventDefault(); redo(); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") { event.preventDefault(); selectAllTables(); }
-      if (event.key === "Escape") { clearTableSelection(); setBulkSelectMode(false); }
-      if ((event.key === "Delete" || event.key === "Backspace") && selectedTableIds.length) { event.preventDefault(); deleteSelectedTables(); }
-      if (selectedTableIds.length && ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) {
-        event.preventDefault();
-        const step = event.shiftKey ? 20 : 5;
-        const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
-        const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
-        pushHistory();
-        const selected = new Set(selectedTableIds);
-        setTables((previous) => previous.map((table) => selected.has(table.id)
-          ? { ...table, pos: { x: Math.max(0, table.pos.x + dx), y: Math.max(0, table.pos.y + dy) } }
-          : table));
-      }
-    };
-    window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  }, [undo, redo, selectAllTables, clearTableSelection, deleteSelectedTables, selectedTableIds, pushHistory, setTables]);
 
   useEffect(() => {
     if (!safeSnapshotRef.current) safeSnapshotRef.current = captureVenueSnapshot();
@@ -1984,8 +1884,8 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
   const requestCanvasExpansion = useCallback((requiredWidth, requiredHeight) => {
     setCanvasSettingsByR((previous) => {
       const current = previous[activeRid] || { width: layoutConfig.canvasWidth, height: layoutConfig.canvasHeight };
-      const nextWidth = Math.min(200000, Math.max(current.width, Math.ceil(requiredWidth / 500) * 500));
-      const nextHeight = Math.min(200000, Math.max(current.height, Math.ceil(requiredHeight / 500) * 500));
+      const nextWidth = Math.min(50000, Math.max(current.width, Math.ceil(requiredWidth / 500) * 500));
+      const nextHeight = Math.min(50000, Math.max(current.height, Math.ceil(requiredHeight / 500) * 500));
       if (nextWidth === current.width && nextHeight === current.height) return previous;
       return { ...previous, [activeRid]: { width: nextWidth, height: nextHeight } };
     });
@@ -1993,18 +1893,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
 
   const moveTable = (id, x, y) => {
     if (!permissions.canMoveTables) return;
-    const source = tables.find((table) => table.id === id);
-    if (!source) return;
-    const isGroupMove = selectedTableIds.length > 1 && selectedTableIds.includes(id);
-    const dx = x - source.pos.x;
-    const dy = y - source.pos.y;
-    const selected = new Set(selectedTableIds);
-    setTables((previous) => previous.map((table) => {
-      if (isGroupMove && selected.has(table.id)) {
-        return { ...table, pos: { x: Math.max(0, table.pos.x + dx), y: Math.max(0, table.pos.y + dy) } };
-      }
-      return table.id === id ? { ...table, pos: { x, y } } : table;
-    }));
+    setTables((prev) => prev.map((t) => (t.id === id ? { ...t, pos: { x, y } } : t)));
   };
 
   const deleteTable = (id) => {
@@ -2015,7 +1904,6 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     pushHistory();
     setTables((prev) => prev.filter((t) => t.id !== id && t.parentId !== id));
     setSelectedTableId(null);
-    setSelectedTableIds((previous) => previous.filter((tableId) => tableId !== id));
   };
 
   const splitTable = (id, rawParts) => {
@@ -2040,7 +1928,6 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     setTables((prev) => prev.map((t)=>t.id===id ? {...t, childIds, status:"available"} : t).concat(children));
     const farthest = children.at(-1); if (farthest) requestCanvasExpansion(farthest.pos.x + parentSize.width + 600, farthest.pos.y + parentSize.height + 600);
     setSelectedTableId(children[0].id);
-    setSelectedTableIds(children.map((child) => child.id));
   };
 
   const mergeTable = (parentId) => {
@@ -2289,7 +2176,6 @@ const toggleAreaEditMode = useCallback(() => {
     if (!permissions.canManageTables) {
       return { ok: false, message: "Lead access is required to generate tables." };
     }
-    pushHistory();
 
     const area = areas.find((candidate) => candidate.id === config.areaId);
     if (!area) return { ok: false, message: "Choose a valid target area." };
@@ -2376,7 +2262,7 @@ const toggleAreaEditMode = useCallback(() => {
       nextStartingNumber: startingNumber + count,
       tableIds: nextTables.map((table) => table.id),
     };
-  }, [areas, getNextTableNumber, permissions.canManageTables, pushHistory, requestCanvasExpansion, setTables, tables]);
+  }, [areas, getNextTableNumber, layoutConfig.canvasHeight, layoutConfig.canvasWidth, permissions.canManageTables, setTables, tables]);
 
   const duplicateAreaWithTables = useCallback((areaId) => {
     if (!permissions.canManageZones || !permissions.canManageTables) {
@@ -2634,31 +2520,6 @@ const toggleAreaEditMode = useCallback(() => {
                 <label><span>Custom capacity</span><input type="number" min="1" max="300" value={customQuickCapacity} onChange={(event) => setCustomQuickCapacity(Number(event.target.value) || 1)} /></label>
                 <LockedButton allowed={permissions.canManageTables} onClick={() => addBlankTable(customQuickCapacity, quickTableType)} className="workspace-primary-action">+ Add custom table</LockedButton>
               </div>
-              <div className="bulk-table-tools">
-                <div className="bulk-table-tools-header">
-                  <strong>Bulk selection</strong>
-                  <span>{selectedTableIds.length} selected</span>
-                </div>
-                <button type="button" className={bulkSelectMode ? "workspace-primary-action" : "workspace-secondary-action"} onClick={() => setBulkSelectMode((value) => !value)}>
-                  <MousePointer2 size={14} /> {bulkSelectMode ? "Bulk select is ON" : "Turn on bulk select"}
-                </button>
-                <div className="bulk-table-button-grid">
-                  <button type="button" onClick={selectAllTables}>Select all</button>
-                  <button type="button" onClick={clearTableSelection}>Clear</button>
-                  <button type="button" onClick={saveDailyLayoutSnapshot}><Save size={14} /> Save layout</button>
-                  <button type="button" className="bulk-danger" onClick={deleteSelectedTables} disabled={!selectedTableIds.length}><Trash2 size={14} /> Delete selected</button>
-                </div>
-                {selectedTableIds.length > 0 && (
-                  <div className="bulk-assignment-grid">
-                    <label><span>Assign server</span><select defaultValue="" onChange={(event) => { if (event.target.value !== "") applyBulkTablePatch({ serverId: event.target.value === "__none" ? null : event.target.value }); event.target.value = ""; }}><option value="">Choose…</option><option value="__none">No server</option>{servers.map((server) => <option key={server.id} value={server.id}>{server.initials} — {server.name}</option>)}</select></label>
-                    <label><span>Assign category</span><select defaultValue="" onChange={(event) => { if (event.target.value) applyBulkTablePatch({ tableType: event.target.value, type: event.target.value === "super_ambassadors" ? "super" : "regular" }); event.target.value = ""; }}><option value="">Choose…</option>{TABLE_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-                    <label><span>Assign group</span><select defaultValue="" onChange={(event) => { if (event.target.value !== "") applyBulkTablePatch({ groupId: event.target.value === "__none" ? null : event.target.value }); event.target.value = ""; }}><option value="">Choose…</option><option value="__none">No group</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
-                    <label><span>Status</span><select defaultValue="" onChange={(event) => { if (event.target.value) applyBulkTablePatch({ status: event.target.value, statusUpdatedAt: new Date().toISOString() }); event.target.value = ""; }}><option value="">Choose…</option><option value="available">Available</option><option value="occupied">Occupied</option></select></label>
-                  </div>
-                )}
-                <button type="button" className="designer-danger-action" onClick={clearAllTables}><Trash2 size={14} /> Delete all venue tables</button>
-                <small>Mac/Windows: ⌘/Ctrl-click to add tables, ⌘/Ctrl+A to select all, arrows to move, Delete/Backspace to remove, Esc to clear.</small>
-              </div>
               <div className="workspace-help-card">
                 <strong>Quick controls</strong>
                 <span>Click: select table</span>
@@ -2727,8 +2588,6 @@ const toggleAreaEditMode = useCallback(() => {
               onExportLayout={exportVenueLayout}
               onImportLayout={importVenueLayout}
               onResetVenue={resetVenueLayout}
-              onSaveLayout={saveDailyLayoutSnapshot}
-              onClearTables={clearAllTables}
               blueprint={blueprintsByR[activeRid]}
               onBlueprintChange={(patch) => setBlueprintsByR((previous) => ({ ...previous, [activeRid]: { ...(previous[activeRid] || {}), ...patch } }))}
             />
@@ -2811,8 +2670,7 @@ const toggleAreaEditMode = useCallback(() => {
             servers={servers}
             groups={groups}
             selectedId={selectedTableId}
-            selectedIds={selectedTableIds}
-            onSelect={selectTable}
+            onSelect={setSelectedTableId}
             onMove={moveTable}
             permissions={permissions}
             zoom={zoom}

@@ -27,7 +27,6 @@ const WORKSPACE_PRESETS = [
   [7200, 4800, "Hale Aloha"],
   [11000, 7000, "Gateway"],
   [16000, 10000, "Extra large"],
-  [100000, 60000, "Gateway unlimited"],
 ];
 
 function Modal({ title, children, onClose, actions }) {
@@ -58,8 +57,6 @@ export default function VenueDesignerPanel({
   onExportLayout,
   onImportLayout,
   onResetVenue,
-  onSaveLayout,
-  onClearTables,
   blueprint,
   onBlueprintChange,
 }) {
@@ -74,13 +71,6 @@ export default function VenueDesignerPanel({
   useEffect(() => setCanvasDraft({ width: canvasWidth, height: canvasHeight }), [canvasWidth, canvasHeight]);
 
   const seatingAreas = useMemo(() => areas.filter((area) => (area.areaKind ?? "seating") === "seating" && !area.hidden), [areas]);
-  useEffect(() => {
-    if (seatingAreas.length === 0) return;
-    if (!seatingAreas.some((area) => area.id === form.areaId)) {
-      setForm((current) => ({ ...current, areaId: seatingAreas[0].id }));
-      onSelectArea?.(seatingAreas[0].id);
-    }
-  }, [form.areaId, onSelectArea, seatingAreas]);
   const selectedArea = useMemo(() => areas.find((area) => area.id === form.areaId) || null, [areas, form.areaId]);
   const visibleTableCount = tables.filter((table) => !(table.childIds && table.childIds.length)).length;
   const patch = (next) => setForm((current) => ({ ...current, ...next }));
@@ -128,7 +118,7 @@ export default function VenueDesignerPanel({
   };
 
   const applyCanvas = () => {
-    onResizeCanvas?.({ width: Math.max(1200, Math.min(200000, Number(canvasDraft.width) || canvasWidth)), height: Math.max(900, Math.min(200000, Number(canvasDraft.height) || canvasHeight)) });
+    onResizeCanvas?.({ width: Math.max(1200, Math.min(50000, Number(canvasDraft.width) || canvasWidth)), height: Math.max(900, Math.min(50000, Number(canvasDraft.height) || canvasHeight)) });
     setMessage("Workspace resized. The canvas also expands automatically when objects approach an edge.");
   };
 
@@ -167,14 +157,14 @@ export default function VenueDesignerPanel({
         </div>
         <label className="designer-check-row"><input type="checkbox" checked={form.replaceAreaTables} onChange={(event) => patch({ replaceAreaTables: event.target.checked })} />Replace existing unsplit tables in this area</label>
         <div className="designer-preview-card"><span>Area</span><strong>{selectedArea?.label || "Not selected"}</strong><span>Tables</span><strong>{effectiveCount}</strong><span>Capacity</span><strong>{form.capacity} each</strong></div>
-        <div className="designer-sticky-action"><button type="button" className="workspace-primary-action" disabled={!canManage || !form.areaId} onClick={runGenerate}><Grid3X3 size={14} /> Generate {effectiveCount} tables now</button></div>
+        <div className="designer-sticky-action"><button type="button" className="workspace-primary-action" disabled={!canManage || !form.areaId} onClick={() => setModal({ type: "confirm" })}><Grid3X3 size={14} /> Review and generate {effectiveCount}</button></div>
       </section>
 
       <section className="designer-section">
         <div className="designer-section-title"><strong>Expandable workspace</strong><span>{canvasWidth} × {canvasHeight}</span></div>
         <p className="designer-small-copy">Drag areas or tables toward the right or bottom and the workspace expands automatically. Shift-drag or middle-mouse drag pans the view.</p>
         <div className="designer-workspace-presets">{WORKSPACE_PRESETS.map(([width, height, label]) => <button type="button" key={label} onClick={() => setCanvasDraft({ width, height })}>{label}<small>{width} × {height}</small></button>)}</div>
-        <div className="designer-grid-two"><label className="designer-field"><span>Width</span><input type="number" min="1200" max="200000" step="500" value={canvasDraft.width} onChange={(event) => setCanvasDraft((current) => ({ ...current, width: Number(event.target.value) }))} /></label><label className="designer-field"><span>Height</span><input type="number" min="900" max="200000" step="500" value={canvasDraft.height} onChange={(event) => setCanvasDraft((current) => ({ ...current, height: Number(event.target.value) }))} /></label></div>
+        <div className="designer-grid-two"><label className="designer-field"><span>Width</span><input type="number" min="1200" max="50000" step="500" value={canvasDraft.width} onChange={(event) => setCanvasDraft((current) => ({ ...current, width: Number(event.target.value) }))} /></label><label className="designer-field"><span>Height</span><input type="number" min="900" max="50000" step="500" value={canvasDraft.height} onChange={(event) => setCanvasDraft((current) => ({ ...current, height: Number(event.target.value) }))} /></label></div>
         <div className="designer-action-grid"><button type="button" onClick={() => setCanvasDraft({ width: canvasWidth + 2000, height: canvasHeight + 1200 })}>Add workspace</button><button type="button" onClick={() => setCanvasDraft({ width: Math.max(canvasWidth, 16000), height: Math.max(canvasHeight, 10000) })}>Huge venue</button></div>
         <button type="button" className="workspace-secondary-action" disabled={!canManage} onClick={applyCanvas}><Maximize2 size={14} /> Apply workspace size</button>
       </section>
@@ -192,15 +182,13 @@ export default function VenueDesignerPanel({
         <button type="button" className="workspace-secondary-action" disabled={!canManage || !form.areaId} onClick={duplicate}><Copy size={14} /> Duplicate selected area with tables</button>
         <div className="designer-action-grid"><button type="button" disabled={!canManage} onClick={onExportLayout}><Download size={14} /> Export</button><button type="button" disabled={!canManage} onClick={() => fileInputRef.current?.click()}><Upload size={14} /> Import</button></div>
         <input ref={fileInputRef} hidden type="file" accept="application/json,.json" onChange={handleImport} />
-        <button type="button" className="workspace-secondary-action" disabled={!canManage} onClick={onSaveLayout}><Download size={14} /> Save daily layout snapshot</button>
-        <button type="button" className="designer-danger-action" disabled={!canManage || visibleTableCount === 0} onClick={onClearTables}><X size={14} /> Delete all venue tables</button>
         <button type="button" className="designer-danger-action" disabled={!canManage} onClick={onResetVenue}><RotateCcw size={14} /> Reset venue layout</button>
       </section>
 
       {message && <div className="designer-message" role="status">{message}</div>}
       <div className="designer-note"><Layers3 size={15} /><span>Seating areas accept tables. Landmark areas such as Stage, Restroom, Drinks, Buffet, Entrance, and Exit are map references only.</span></div>
 
-      
+      {modal?.type === "confirm" && <Modal title="Confirm table generation" onClose={() => setModal(null)} actions={<><button type="button" onClick={() => setModal(null)}>Cancel</button><button type="button" className="gold-primary" onClick={runGenerate}>Generate tables</button></>}><div className="designer-confirm-grid"><span>Venue</span><strong>{venueName}</strong><span>Area</span><strong>{selectedArea?.label}</strong><span>Tables</span><strong>{effectiveCount}</strong><span>Seats each</span><strong>{form.capacity}</strong><span>Category</span><strong>{TABLE_TYPES.find(([value]) => value === form.tableType)?.[1]}</strong></div></Modal>}
       {modal?.type === "success" && <Modal title="Tables created" onClose={() => setModal(null)} actions={<button type="button" className="gold-primary" onClick={() => setModal(null)}>Done</button>}><p><strong>{modal.result.count} tables</strong> were added to <strong>{modal.result.areaLabel}</strong>. The first table is selected and all new tables remain independently draggable.</p></Modal>}
       {modal?.type === "help" && <Modal title="How to design a venue" onClose={() => setModal(null)} actions={<button type="button" className="gold-primary" onClick={() => setModal(null)}>Got it</button>}><ol className="designer-help-steps"><li>Use Areas to draw seating regions or map landmarks.</li><li>Landmarks show Stage, Restroom, Drinks, Buffet, Entrance, Exit, or another station but never receive guests.</li><li>Drag toward the workspace edge—the canvas expands automatically.</li><li>Use Shift-drag or the middle mouse button to pan.</li><li>Optionally import a blueprint at low opacity, trace the useful areas, then hide or remove it.</li><li>Generate tables only inside seating areas.</li></ol><div className="designer-example"><strong>Gateway example</strong><span>Select the Huge Venue preset, draw the major seating sections, add Stage/Drinks/Buffet landmarks, then generate tables per section.</span></div></Modal>}
     </div>
