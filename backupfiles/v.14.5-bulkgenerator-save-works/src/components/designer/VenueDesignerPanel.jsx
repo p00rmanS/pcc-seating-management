@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import DailySetupGenerator from "./DailySetupGenerator";
 import {
   Copy,
   Download,
@@ -48,7 +47,6 @@ function Modal({ title, children, onClose, actions }) {
 }
 
 export default function VenueDesignerPanel({
-  venueId,
   venueName,
   areas,
   selectedAreaId,
@@ -60,7 +58,6 @@ export default function VenueDesignerPanel({
   onSelectArea,
   onSelectTable,
   onGenerateTables,
-  onGenerateDailyTables,
   onDuplicateAreaWithTables,
   onExportLayout,
   onImportLayout,
@@ -145,13 +142,41 @@ export default function VenueDesignerPanel({
 
   return (
     <div className="designer-panel">
-      <DailySetupGenerator
-        venueId={venueId}
-        venueName={venueName}
-        canManage={canManage}
-        layoutLocked={layoutLocked}
-        onGenerate={onGenerateDailyTables}
-      />
+      <div className="designer-heading">
+        <div><h2><Grid3X3 size={15} /> Quick Table Generator</h2><p>Choose a seating area, amount, capacity, and category. Landmarks cannot receive guest tables.</p></div>
+        <button type="button" className="designer-help-button" onClick={() => setModal({ type: "help" })}><HelpCircle size={15} /> Help</button>
+      </div>
+
+      <section className="designer-section">
+        <label className="designer-field designer-field-wide"><span>Seating area</span><select value={form.areaId} onChange={(event) => { patch({ areaId: event.target.value }); onSelectArea?.(event.target.value || null); }}><option value="">Choose a seating area</option>{seatingAreas.map((area) => <option key={area.id} value={area.id}>{area.label}</option>)}</select></label>
+        <div className="designer-section-title"><strong>How many tables?</strong><span>{effectiveCount} selected</span></div>
+        <div className="designer-count-buttons">{COUNT_PRESETS.map((count) => <button type="button" key={count} className={form.countMode === "preset" && Number(form.count) === count ? "active" : ""} onClick={() => patch({ count, countMode: "preset", customCount: "" })}>{count}</button>)}</div>
+        <label className="designer-field designer-field-wide"><span>Custom amount</span><div className="designer-inline-field"><input type="number" min="1" max="100" value={form.customCount} onChange={(event) => patch({ customCount: event.target.value, countMode: "custom" })} /><small>Use 12, 16, 20, 24, or any other amount.</small></div></label>
+        <div className="designer-grid-two">
+          <label className="designer-field"><span>Seats per table</span><input type="number" min="1" max="300" value={form.capacity} onChange={(event) => patch({ capacity: Number(event.target.value) || 1 })} /></label>
+          <label className="designer-field"><span>Starting table #</span><input type="number" min="0" value={form.startingNumber} onChange={(event) => patch({ startingNumber: Number(event.target.value) || 0 })} /></label>
+          <fieldset className="designer-field designer-field-wide designer-category-field">
+            <legend>Table category</legend>
+            <div className="designer-category-grid">
+              {TABLE_TYPES.map(([value, label]) => (
+                <button
+                  type="button"
+                  key={value}
+                  className={form.tableType === value ? "active" : ""}
+                  aria-pressed={form.tableType === value}
+                  onClick={() => patch({ tableType: value })}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+          <label className="designer-field designer-field-wide"><span>Visual size</span><select value={form.tableSize} onChange={(event) => patch({ tableSize: Number(event.target.value) })}><option value="28">Compact</option><option value="34">Standard</option><option value="42">Large</option><option value="52">Extra large</option></select></label>
+        </div>
+        <label className="designer-check-row"><input type="checkbox" checked={form.replaceAreaTables} onChange={(event) => patch({ replaceAreaTables: event.target.checked })} />Replace existing unsplit tables in this area</label>
+        <div className="designer-preview-card"><span>Area</span><strong>{selectedArea?.label || "Not selected"}</strong><span>Tables</span><strong>{effectiveCount}</strong><span>Capacity</span><strong>{form.capacity} each</strong></div>
+        <div className="designer-sticky-action"><button type="button" className="workspace-primary-action" disabled={!canManage || layoutLocked || !form.areaId} onClick={runGenerate}><Grid3X3 size={14} /> Generate {effectiveCount} tables now</button></div>
+      </section>
 
       <section className="designer-section">
         <div className="designer-section-title"><strong>Expandable workspace</strong><span>{canvasWidth} × {canvasHeight}</span></div>

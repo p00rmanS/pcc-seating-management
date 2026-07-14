@@ -14,8 +14,6 @@ import {
 } from "./services/firebase/realtimeSync";
 import LoginScreen from "./components/auth/LoginScreen";
 import ProfileSetupScreen from "./components/auth/ProfileSetupScreen";
-import PasswordChangeScreen from "./components/auth/PasswordChangeScreen";
-import AccountSecurityModal from "./components/auth/AccountSecurityModal";
 import AppHeader from "./components/layout/AppHeader";
 import ToolSidebar from "./components/layout/ToolSidebar";
 import InspectorPanel from "./components/layout/InspectorPanel";
@@ -55,7 +53,6 @@ import {
   CircleHelp,
   LayoutDashboard,
   FlaskConical,
-  Save,
 } from "lucide-react";
 
 /* ============================================================
@@ -135,8 +132,8 @@ const RESTAURANT_LAYOUT_CONFIG = {
   },
   gateway: {
     name: "Gateway",
-    canvasWidth: 24000,
-    canvasHeight: 14000,
+    canvasWidth: 11000,
+    canvasHeight: 7000,
     minZoom: 0.25,
     maxZoom: 2,
     defaultZoom: 0.45,
@@ -708,7 +705,7 @@ function TableChip({
   const onPointerUp = (e) => {
     const d = dragRef.current;
     if (canDrag) e.currentTarget.releasePointerCapture(e.pointerId);
-    if (!d.moved) onSelect(table.id, e);
+    if (!d.moved) onSelect(table.id);
     dragRef.current.dragging = false;
   };
   const onContextMenu = (e) => {
@@ -1089,7 +1086,6 @@ function FloorPlanCanvas({
   servers,
   groups,
   selectedId,
-  selectedIds = [],
   onSelect,
   onMove,
   permissions,
@@ -1101,8 +1097,6 @@ function FloorPlanCanvas({
   blueprint,
   onBeginTableMove,
   onBeginAreaInteraction,
-  onBoxSelect,
-  layoutLocked = false,
 }) {
   const { canvasWidth, canvasHeight, minZoom, maxZoom, defaultZoom } = layoutConfig;
 
@@ -1116,36 +1110,6 @@ function FloorPlanCanvas({
 
   const scrollRef = useRef(null);
   const panRef = useRef(null);
-  const lassoRef = useRef(null);
-  const [selectionBox, setSelectionBox] = useState(null);
-
-  const startLasso = (event) => {
-    if (areaEditMode || event.button !== 0 || event.shiftKey || event.target !== event.currentTarget) return;
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - bounds.left) / zoom;
-    const y = (event.clientY - bounds.top) / zoom;
-    lassoRef.current = { startX: x, startY: y, additive: event.ctrlKey || event.metaKey };
-    setSelectionBox({ x, y, width: 0, height: 0 });
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-  };
-  const moveLasso = (event) => {
-    const start = lassoRef.current;
-    if (!start) return;
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const currentX = (event.clientX - bounds.left) / zoom;
-    const currentY = (event.clientY - bounds.top) / zoom;
-    setSelectionBox({ x: Math.min(start.startX, currentX), y: Math.min(start.startY, currentY), width: Math.abs(currentX - start.startX), height: Math.abs(currentY - start.startY) });
-  };
-  const endLasso = (event) => {
-    const start = lassoRef.current;
-    if (!start) return;
-    const box = selectionBox;
-    lassoRef.current = null;
-    setSelectionBox(null);
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
-    if (box && (box.width > 4 || box.height > 4)) onBoxSelect?.(box, start.additive);
-    else if (!start.additive) onSelect(null);
-  };
   const startPan = (event) => {
     if (!(event.button === 1 || event.shiftKey)) return;
     event.preventDefault();
@@ -1171,8 +1135,7 @@ function FloorPlanCanvas({
 
   return (
     <div className="floor-canvas-shell">
-      {layoutLocked && <div className="floor-mode-badge">🔒 Layout Locked</div>}
-      {!layoutLocked && areaEditMode && <div className="floor-mode-badge">Area Edit Mode</div>}
+      {areaEditMode && <div className="floor-mode-badge">Area Edit Mode</div>}
       <div className="floor-workspace bg-white rounded-xl border border-slate-200">
         <div ref={scrollRef} className="floor-scroll-container" style={{ width: "100%", height: "100%", overflow: "auto" }} onWheel={onWheel} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan}>
           <div className="floor-canvas-scale-layer" style={{ position: "relative", width: canvasWidth * zoom, height: canvasHeight * zoom }}>
@@ -1181,12 +1144,9 @@ function FloorPlanCanvas({
             style={{ position: "absolute", width: canvasWidth, height: canvasHeight, transform: `scale(${zoom})`, transformOrigin: "top left" }}
             onPointerDown={(event) => {
               if (event.target !== event.currentTarget) return;
-              if (areaEditMode) { onSelectArea(null); return; }
-              startLasso(event);
+              if (areaEditMode) onSelectArea(null);
+              else onSelect(null);
             }}
-            onPointerMove={moveLasso}
-            onPointerUp={endLasso}
-            onPointerCancel={endLasso}
           >
             {blueprint?.dataUrl && blueprint.visible !== false && (
               <img className="venue-blueprint-overlay" src={blueprint.dataUrl} alt="Imported venue blueprint" style={{ opacity: blueprint.opacity ?? 0.35 }} draggable="false" />
@@ -1215,7 +1175,7 @@ function FloorPlanCanvas({
                   table={table}
                   server={serverById.get(table.serverId)}
                   group={groupById.get(table.groupId)}
-                  isSelected={selectedId === table.id || selectedIds.includes(table.id)}
+                  isSelected={selectedId === table.id}
                   onSelect={onSelect}
                   onMove={onMove}
                   canvasWidth={canvasWidth}
@@ -1228,9 +1188,6 @@ function FloorPlanCanvas({
                   onBeginMove={onBeginTableMove}
                 />
               ))}
-            {selectionBox && (
-              <div className="table-selection-box" style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.width, height: selectionBox.height }} />
-            )}
           </div>
           </div>
         </div>
@@ -1352,8 +1309,6 @@ function GroupPanel({ groups, tables, onAdd, onRemove, canManage }) {
 // ---------- main app ----------
 
 function SeatingWorkspace({ authSession }) {
-  const [accountModalOpen, setAccountModalOpen] = useState(false);
-  const [accountPasswordOpen, setAccountPasswordOpen] = useState(false);
   const [localSnapshot] = useState(() =>
     loadLocalSnapshot(authSession.user.uid, {
       allowLegacyMigration: ["lead", "admin", "developer", "director", "manager", "assistant_manager"].includes(authSession.profile.role),
@@ -1375,14 +1330,6 @@ function SeatingWorkspace({ authSession }) {
       ? localSnapshot.activeRid
       : seedRestaurants[0].id
   );
-
-  const [layoutLocksByR, setLayoutLocksByR] = useState(() => {
-    try { return JSON.parse(window.localStorage.getItem("pcc-layout-locks-v14.3") || "{}"); } catch { return {}; }
-  });
-  const [layoutBaselineMetaByR, setLayoutBaselineMetaByR] = useState(() => {
-    try { return JSON.parse(window.localStorage.getItem("pcc-layout-baseline-meta-v14.3") || "{}"); } catch { return {}; }
-  });
-  const layoutLocked = layoutLocksByR[activeRid] === true;
 
   const [tablesByR, setTablesByR] = useState(() => {
     const out = {};
@@ -1442,17 +1389,9 @@ const [staffingAssignments, setStaffingAssignments] = useState({});
 const [staffingSaveState, setStaffingSaveState] = useState("idle");
 const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seedRestaurants.map((restaurant) => [restaurant.id, { dataUrl: null, opacity: 0.35, visible: true }])));
 
-  useEffect(() => {
-    window.localStorage.setItem("pcc-layout-locks-v14.3", JSON.stringify(layoutLocksByR));
-  }, [layoutLocksByR]);
-  useEffect(() => {
-    window.localStorage.setItem("pcc-layout-baseline-meta-v14.3", JSON.stringify(layoutBaselineMetaByR));
-  }, [layoutBaselineMetaByR]);
-  useEffect(() => { if (layoutLocked) setAreaEditMode(false); }, [layoutLocked]);
-
   // ---------- authenticated roles & server-enforced venue access ----------
   const currentRole = authSession.profile.role;
-  const isLeadOrAdmin = ["lead", "admin", "developer", "director", "manager", "assistant_manager", "front_lead", "back_lead"].includes(currentRole);
+  const isLeadOrAdmin = ["lead", "admin", "developer", "director", "manager", "assistant_manager", "front_lead"].includes(currentRole);
   const authorizedVenueIds = useMemo(
     () =>
       ["admin", "developer", "director"].includes(currentRole)
@@ -1472,7 +1411,6 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     if (!authorizedVenueIds.includes(activeRid)) {
       setActiveRid(authorizedVenueIds[0]);
       setSelectedTableId(null);
-      setSelectedTableIds([]);
       setSelectedAreaId(null);
       setAreaEditMode(false);
     }
@@ -1497,18 +1435,17 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     canUpdateStatus: true,
     canEditGuestName: true,
 
-    canEditLayout: isLeadOrAdmin && !layoutLocked,
-    canMoveTables: isLeadOrAdmin && !layoutLocked,
-    canManageTables: isLeadOrAdmin && !layoutLocked,
-    canDeleteTables: isLeadOrAdmin && !layoutLocked,
-    canSplitTables: isLeadOrAdmin && !layoutLocked,
-    canMergeTables: isLeadOrAdmin && !layoutLocked,
-    canManageZones: isLeadOrAdmin && !layoutLocked,
-    canManageServers: isLeadOrAdmin && !layoutLocked,
-    canManageGroups: isLeadOrAdmin && !layoutLocked,
-    canUseBulkGenerator: isLeadOrAdmin && !layoutLocked,
-    canEditRestaurantSetup: isLeadOrAdmin && !layoutLocked,
-    canManageStaffing: ["lead", "admin", "developer", "director", "manager", "assistant_manager", "front_lead", "back_lead"].includes(currentRole),
+    canEditLayout: isLeadOrAdmin,
+    canMoveTables: isLeadOrAdmin,
+    canManageTables: isLeadOrAdmin,
+    canDeleteTables: isLeadOrAdmin,
+    canSplitTables: isLeadOrAdmin,
+    canMergeTables: isLeadOrAdmin,
+    canManageZones: isLeadOrAdmin,
+    canManageServers: isLeadOrAdmin,
+    canManageGroups: isLeadOrAdmin,
+    canUseBulkGenerator: isLeadOrAdmin,
+    canEditRestaurantSetup: isLeadOrAdmin,
   };
 
   const [canvasSettingsByR, setCanvasSettingsByR] = useState(() =>
@@ -1553,8 +1490,6 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     setViewSettingsByRestaurant((prev) => ({ ...prev, [activeRid]: { ...prev[activeRid], zoom: z } }));
 
   const [selectedTableId, setSelectedTableId] = useState(null);
-  const [selectedTableIds, setSelectedTableIds] = useState([]);
-  const [bulkSelectMode, setBulkSelectMode] = useState(false);
   const [activeTool, setActiveTool] = useState("tables");
   const [quickTableType, setQuickTableType] = useState("regular");
   const [customQuickCapacity, setCustomQuickCapacity] = useState(16);
@@ -1828,6 +1763,16 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     if (window.confirm("Restore the most recent safe snapshot for this venue?")) restoreVenueSnapshot(safeSnapshotRef.current);
   }, [restoreVenueSnapshot]);
 
+  useEffect(() => {
+    const handler = (event) => {
+      const target = event.target;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") { event.preventDefault(); redo(); }
+    };
+    window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
+  }, [undo, redo]);
+
   const setTables = useCallback(
     (updater) =>
       setTablesByR((prev) => ({
@@ -1837,155 +1782,6 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     [activeRid]
   );
 
-  const visibleTables = useMemo(
-    () => tables.filter((table) => !(table.childIds && table.childIds.length)),
-    [tables]
-  );
-
-  const selectTable = useCallback((id, event) => {
-    const additive = bulkSelectMode || event?.ctrlKey || event?.metaKey || event?.shiftKey;
-    if (!id) {
-      setSelectedTableId(null);
-      setSelectedTableIds([]);
-      return;
-    }
-    if (additive) {
-      setSelectedTableIds((previous) => {
-        const exists = previous.includes(id);
-        const next = exists ? previous.filter((tableId) => tableId !== id) : [...previous, id];
-        setSelectedTableId(next.includes(id) ? id : next.at(-1) || null);
-        return next;
-      });
-      return;
-    }
-    setSelectedTableId(id);
-    setSelectedTableIds([id]);
-  }, [bulkSelectMode]);
-
-  const clearTableSelection = useCallback(() => {
-    setSelectedTableId(null);
-    setSelectedTableIds([]);
-  }, []);
-
-  const selectAllTables = useCallback(() => {
-    const ids = visibleTables.map((table) => table.id);
-    setSelectedTableIds(ids);
-    setSelectedTableId(ids.at(-1) || null);
-  }, [visibleTables]);
-
-  const selectTablesInBox = useCallback((box, additive = false) => {
-    const ids = visibleTables.filter((table) => {
-      const size = getTableDisplaySize(table);
-      const left = table.pos.x;
-      const top = table.pos.y;
-      const right = left + size.width;
-      const bottom = top + size.height;
-      return right >= box.x && left <= box.x + box.width && bottom >= box.y && top <= box.y + box.height;
-    }).map((table) => table.id);
-    setSelectedTableIds((previous) => {
-      const next = additive ? Array.from(new Set([...previous, ...ids])) : ids;
-      setSelectedTableId(next.at(-1) || null);
-      return next;
-    });
-  }, [visibleTables]);
-
-  const applyBulkTablePatch = useCallback((patch) => {
-    if (!permissions.canManageTables || selectedTableIds.length === 0) return;
-    pushHistory();
-    const selected = new Set(selectedTableIds);
-    setTables((previous) => previous.map((table) => selected.has(table.id) ? { ...table, ...patch } : table));
-  }, [permissions.canManageTables, pushHistory, selectedTableIds, setTables]);
-
-  const deleteSelectedTables = useCallback(() => {
-    if (!permissions.canDeleteTables || selectedTableIds.length === 0) return;
-    const selected = new Set(selectedTableIds);
-    const splitChildSelected = tables.some((table) => selected.has(table.id) && table.parentId);
-    if (splitChildSelected) {
-      window.alert("Merge split tables before deleting their individual parts.");
-      return;
-    }
-    if (!window.confirm(`Delete ${selectedTableIds.length} selected table${selectedTableIds.length === 1 ? "" : "s"}?`)) return;
-    pushHistory();
-    setTables((previous) => previous.filter((table) => !selected.has(table.id) && !selected.has(table.parentId)));
-    clearTableSelection();
-  }, [clearTableSelection, permissions.canDeleteTables, pushHistory, selectedTableIds, setTables, tables]);
-
-  const clearAllTables = useCallback(() => {
-    if (!permissions.canDeleteTables) return;
-    if (!window.confirm(`Delete ALL tables from ${layoutConfig.name}? Areas and landmarks will remain.`)) return;
-    pushHistory();
-    setTables([]);
-    clearTableSelection();
-  }, [clearTableSelection, layoutConfig.name, permissions.canDeleteTables, pushHistory, setTables]);
-
-  const saveDailyLayoutSnapshot = useCallback(() => {
-    if (!isLeadOrAdmin) return;
-    const snapshot = captureVenueSnapshot();
-    safeSnapshotRef.current = snapshot;
-    const savedAt = new Date().toISOString();
-    try {
-      localStorage.setItem(`pcc-seating-layout-baseline-v14.3:${activeRid}`, JSON.stringify({ savedAt, venueId: activeRid, snapshot }));
-      setLayoutBaselineMetaByR((previous) => ({ ...previous, [activeRid]: savedAt }));
-      window.alert(`${layoutConfig.name} layout saved. This is now the baseline for Reset Today’s Tables.`);
-    } catch (error) {
-      console.error("Unable to save layout baseline:", error);
-      window.alert("The layout baseline could not be saved in this browser.");
-    }
-  }, [activeRid, captureVenueSnapshot, isLeadOrAdmin, layoutConfig.name]);
-
-  const toggleLayoutLock = useCallback(() => {
-    if (!isLeadOrAdmin) return;
-    setLayoutLocksByR((previous) => ({ ...previous, [activeRid]: !previous[activeRid] }));
-    setSelectedAreaId(null);
-    setSelectedTableId(null);
-    setSelectedTableIds([]);
-  }, [activeRid, isLeadOrAdmin]);
-
-  const resetTodaysTables = useCallback(() => {
-    if (!isLeadOrAdmin) return;
-    let stored;
-    try { stored = JSON.parse(localStorage.getItem(`pcc-seating-layout-baseline-v14.3:${activeRid}`) || "null"); } catch { stored = null; }
-    if (!stored?.snapshot?.tables) {
-      window.alert("Save Layout first. No approved baseline exists for this venue yet.");
-      return;
-    }
-    if (!window.confirm(`Reset today’s ${layoutConfig.name} tables? Guest names, status, party size, server assignments, and groups will be cleared while the saved table positions and venue design are restored.`)) return;
-    pushHistory();
-    const baseline = stored.snapshot;
-    const cleanTables = structuredClone(baseline.tables).map((table) => ({
-      ...table, status: "available", statusUpdatedAt: null, serverId: null, groupId: null,
-      guestName: "", guestInitials: "", partySize: null, color: null,
-    }));
-    setTablesByR((previous) => ({ ...previous, [activeRid]: cleanTables }));
-    setAreasByR((previous) => ({ ...previous, [activeRid]: structuredClone(baseline.areas || previous[activeRid] || []) }));
-    setCanvasSettingsByR((previous) => ({ ...previous, [activeRid]: structuredClone(baseline.canvas || previous[activeRid]) }));
-    setSelectedAreaId(null); setSelectedTableId(null); setSelectedTableIds([]);
-  }, [activeRid, isLeadOrAdmin, layoutConfig.name, pushHistory]);
-
-
-  useEffect(() => {
-    const handler = (event) => {
-      const target = event.target;
-      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") { event.preventDefault(); redo(); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") { event.preventDefault(); selectAllTables(); }
-      if (event.key === "Escape") { clearTableSelection(); setBulkSelectMode(false); }
-      if ((event.key === "Delete" || event.key === "Backspace") && selectedTableIds.length) { event.preventDefault(); deleteSelectedTables(); }
-      if (selectedTableIds.length && ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) {
-        event.preventDefault();
-        const step = event.shiftKey ? 20 : 5;
-        const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
-        const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
-        pushHistory();
-        const selected = new Set(selectedTableIds);
-        setTables((previous) => previous.map((table) => selected.has(table.id)
-          ? { ...table, pos: { x: Math.max(0, table.pos.x + dx), y: Math.max(0, table.pos.y + dy) } }
-          : table));
-      }
-    };
-    window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  }, [undo, redo, selectAllTables, clearTableSelection, deleteSelectedTables, selectedTableIds, pushHistory, setTables]);
 
   useEffect(() => {
     if (!safeSnapshotRef.current) safeSnapshotRef.current = captureVenueSnapshot();
@@ -2084,8 +1880,8 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
   const requestCanvasExpansion = useCallback((requiredWidth, requiredHeight) => {
     setCanvasSettingsByR((previous) => {
       const current = previous[activeRid] || { width: layoutConfig.canvasWidth, height: layoutConfig.canvasHeight };
-      const nextWidth = Math.min(200000, Math.max(current.width, Math.ceil(requiredWidth / 500) * 500));
-      const nextHeight = Math.min(200000, Math.max(current.height, Math.ceil(requiredHeight / 500) * 500));
+      const nextWidth = Math.min(50000, Math.max(current.width, Math.ceil(requiredWidth / 500) * 500));
+      const nextHeight = Math.min(50000, Math.max(current.height, Math.ceil(requiredHeight / 500) * 500));
       if (nextWidth === current.width && nextHeight === current.height) return previous;
       return { ...previous, [activeRid]: { width: nextWidth, height: nextHeight } };
     });
@@ -2093,18 +1889,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
 
   const moveTable = (id, x, y) => {
     if (!permissions.canMoveTables) return;
-    const source = tables.find((table) => table.id === id);
-    if (!source) return;
-    const isGroupMove = selectedTableIds.length > 1 && selectedTableIds.includes(id);
-    const dx = x - source.pos.x;
-    const dy = y - source.pos.y;
-    const selected = new Set(selectedTableIds);
-    setTables((previous) => previous.map((table) => {
-      if (isGroupMove && selected.has(table.id)) {
-        return { ...table, pos: { x: Math.max(0, table.pos.x + dx), y: Math.max(0, table.pos.y + dy) } };
-      }
-      return table.id === id ? { ...table, pos: { x, y } } : table;
-    }));
+    setTables((prev) => prev.map((t) => (t.id === id ? { ...t, pos: { x, y } } : t)));
   };
 
   const deleteTable = (id) => {
@@ -2115,7 +1900,6 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     pushHistory();
     setTables((prev) => prev.filter((t) => t.id !== id && t.parentId !== id));
     setSelectedTableId(null);
-    setSelectedTableIds((previous) => previous.filter((tableId) => tableId !== id));
   };
 
   const splitTable = (id, rawParts) => {
@@ -2140,7 +1924,6 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     setTables((prev) => prev.map((t)=>t.id===id ? {...t, childIds, status:"available"} : t).concat(children));
     const farthest = children.at(-1); if (farthest) requestCanvasExpansion(farthest.pos.x + parentSize.width + 600, farthest.pos.y + parentSize.height + 600);
     setSelectedTableId(children[0].id);
-    setSelectedTableIds(children.map((child) => child.id));
   };
 
   const mergeTable = (parentId) => {
@@ -2389,7 +2172,6 @@ const toggleAreaEditMode = useCallback(() => {
     if (!permissions.canManageTables) {
       return { ok: false, message: "Lead access is required to generate tables." };
     }
-    pushHistory();
 
     const area = areas.find((candidate) => candidate.id === config.areaId);
     if (!area) return { ok: false, message: "Choose a valid target area." };
@@ -2401,14 +2183,14 @@ const toggleAreaEditMode = useCallback(() => {
       : getNextTableNumber();
     const capacity = Math.max(1, Number(config.capacity) || 4);
     const tableType = getTableTypeDefinition(config.tableType).value;
+    const columns = Math.max(1, Math.ceil(Math.sqrt(count)));
+    const rows = Math.ceil(count / columns);
     const tableSize = Math.max(28, Math.min(60, Number(config.tableSize) || 36));
     const gap = 12;
-    const usableWidth = Math.max(tableSize, Number(area.w) - 24);
-    const maxColumnsByWidth = Math.max(1, Math.floor((usableWidth + gap) / (tableSize + gap)));
-    const columns = Math.min(count, maxColumnsByWidth);
-    const rows = Math.ceil(count / columns);
-    const stepX = tableSize + gap;
-    const stepY = tableSize + gap;
+    const availableWidth = Math.max(tableSize, area.w - 24);
+    const availableHeight = Math.max(tableSize, area.h - 38);
+    const stepX = columns > 1 ? Math.max(tableSize + 4, Math.min(tableSize + gap, (availableWidth - tableSize) / (columns - 1))) : 0;
+    const stepY = rows > 1 ? Math.max(tableSize + 4, Math.min(tableSize + gap, (availableHeight - tableSize) / (rows - 1))) : 0;
 
     const candidateNumbers = Array.from({ length: count }, (_, index) => String(startingNumber + index));
     const existingNumbers = new Set(
@@ -2476,122 +2258,7 @@ const toggleAreaEditMode = useCallback(() => {
       nextStartingNumber: startingNumber + count,
       tableIds: nextTables.map((table) => table.id),
     };
-  }, [areas, getNextTableNumber, permissions.canManageTables, pushHistory, requestCanvasExpansion, setTables, tables]);
-
-  const generateDailyTables = useCallback((config) => {
-    if (!permissions.canManageTables) {
-      return { ok: false, message: "Lead access is required to generate tables." };
-    }
-    if (layoutLocked) {
-      return { ok: false, message: "Unlock the layout before generating today’s tables." };
-    }
-
-    const seatingAreas = areas
-      .filter((area) => (area.areaKind ?? "seating") === "seating" && !area.hidden)
-      .sort((a, b) => (Number(a.y) - Number(b.y)) || (Number(a.x) - Number(b.x)));
-    if (!seatingAreas.length) {
-      return { ok: false, message: "Add at least one visible seating area first." };
-    }
-
-    const entries = (Array.isArray(config.entries) ? config.entries : [])
-      .map((entry) => ({
-        capacity: Math.max(1, Number(entry.capacity) || 1),
-        count: Math.max(0, Math.min(200, Number(entry.count) || 0)),
-      }))
-      .filter((entry) => entry.count > 0);
-    const totalCount = entries.reduce((sum, entry) => sum + entry.count, 0);
-    if (!totalCount) return { ok: false, message: "Enter at least one table count." };
-
-    pushHistory();
-
-    const startingNumber = Number.isFinite(Number(config.startingNumber))
-      ? Number(config.startingNumber)
-      : 1;
-    const tableType = getTableTypeDefinition(config.tableType).value;
-    const tableSize = Math.max(28, Math.min(60, Number(config.tableSize) || 34));
-    const gap = 10;
-    const slots = [];
-
-    seatingAreas.forEach((area) => {
-      const innerWidth = Math.max(tableSize, Number(area.w) - 24);
-      const innerHeight = Math.max(tableSize, Number(area.h) - 42);
-      const columns = Math.max(1, Math.floor((innerWidth + gap) / (tableSize + gap)));
-      const rows = Math.max(1, Math.floor((innerHeight + gap) / (tableSize + gap)));
-      for (let row = 0; row < rows; row += 1) {
-        for (let column = 0; column < columns; column += 1) {
-          slots.push({
-            area,
-            x: Math.max(0, Number(area.x) + 12 + column * (tableSize + gap)),
-            y: Math.max(0, Number(area.y) + 28 + row * (tableSize + gap)),
-          });
-        }
-      }
-    });
-
-    // If the designed seating areas are smaller than today's count, keep adding
-    // orderly overflow rows to the last seating area instead of failing silently.
-    const overflowArea = seatingAreas[seatingAreas.length - 1];
-    const overflowColumns = Math.max(1, Math.floor((Math.max(tableSize, Number(overflowArea.w) - 24) + gap) / (tableSize + gap)));
-    while (slots.length < totalCount) {
-      const overflowIndex = slots.length;
-      const row = Math.floor(overflowIndex / overflowColumns);
-      const column = overflowIndex % overflowColumns;
-      slots.push({
-        area: overflowArea,
-        x: Math.max(0, Number(overflowArea.x) + 12 + column * (tableSize + gap)),
-        y: Math.max(0, Number(overflowArea.y) + 28 + row * (tableSize + gap)),
-      });
-    }
-
-    const capacities = entries.flatMap((entry) => Array.from({ length: entry.count }, () => entry.capacity));
-    const nextTables = capacities.map((capacity, index) => {
-      const slot = slots[index];
-      return {
-        id: uid("t"),
-        number: String(startingNumber + index),
-        capacity,
-        zone: slot.area.label,
-        areaId: slot.area.id,
-        type: tableType === "super_ambassadors" ? "super" : "regular",
-        tableType,
-        displaySize: { width: tableSize, height: tableSize },
-        status: "available",
-        statusUpdatedAt: null,
-        serverId: null,
-        guestName: "",
-        guestInitials: "",
-        showTableNumber: true,
-        showServerInitials: true,
-        showGuestName: false,
-        showGuestInitials: false,
-        partySize: null,
-        color: null,
-        groupId: null,
-        parentId: null,
-        childIds: null,
-        pos: { x: slot.x, y: slot.y },
-      };
-    });
-
-    const farthest = nextTables.reduce((best, table) => (
-      !best || table.pos.y > best.pos.y || (table.pos.y === best.pos.y && table.pos.x > best.pos.x) ? table : best
-    ), null);
-    if (farthest) requestCanvasExpansion(farthest.pos.x + tableSize + 600, farthest.pos.y + tableSize + 600);
-
-    // This is intentionally a full replacement. It makes the button safe and
-    // repeatable: clicking it again rebuilds the same day's setup instead of
-    // colliding with table numbers from the previous click.
-    setSelectedTableId(null);
-    setSelectedTableIds([]);
-    setTables(nextTables);
-
-    return {
-      ok: true,
-      count: totalCount,
-      nextStartingNumber: startingNumber + totalCount,
-      message: `${totalCount} tables generated. Today’s previous tables were replaced; venue areas were preserved.`,
-    };
-  }, [areas, layoutLocked, permissions.canManageTables, pushHistory, requestCanvasExpansion, setTables]);
+  }, [areas, getNextTableNumber, layoutConfig.canvasHeight, layoutConfig.canvasWidth, permissions.canManageTables, setTables, tables]);
 
   const duplicateAreaWithTables = useCallback((areaId) => {
     if (!permissions.canManageZones || !permissions.canManageTables) {
@@ -2745,7 +2412,7 @@ const toggleAreaEditMode = useCallback(() => {
   };
 
   const saveStaffing = async () => {
-    if (!permissions.canManageStaffing) return;
+    if (!permissions.canEditRestaurantSetup) return;
     setStaffingSaveState("saving");
     try {
       await saveVenueStaffing(activeRid, staffingDate, staffingAssignments, { uid: authSession.user.uid, name: authSession.profile.displayName });
@@ -2793,7 +2460,6 @@ const toggleAreaEditMode = useCallback(() => {
           setAreaEditMode(false);
         }}
         onSignOut={signOutEmployee}
-        onOpenAccount={() => setAccountModalOpen(true)}
         testingMode
         onRetryCloud={() => retryCloudRef.current?.()}
       />
@@ -2849,31 +2515,6 @@ const toggleAreaEditMode = useCallback(() => {
                 <label><span>Custom capacity</span><input type="number" min="1" max="300" value={customQuickCapacity} onChange={(event) => setCustomQuickCapacity(Number(event.target.value) || 1)} /></label>
                 <LockedButton allowed={permissions.canManageTables} onClick={() => addBlankTable(customQuickCapacity, quickTableType)} className="workspace-primary-action">+ Add custom table</LockedButton>
               </div>
-              <div className="bulk-table-tools">
-                <div className="bulk-table-tools-header">
-                  <strong>Bulk selection</strong>
-                  <span>{selectedTableIds.length} selected</span>
-                </div>
-                <button type="button" className={bulkSelectMode ? "workspace-primary-action" : "workspace-secondary-action"} onClick={() => setBulkSelectMode((value) => !value)}>
-                  <MousePointer2 size={14} /> {bulkSelectMode ? "Bulk select is ON" : "Turn on bulk select"}
-                </button>
-                <div className="bulk-table-button-grid">
-                  <button type="button" onClick={selectAllTables}>Select all</button>
-                  <button type="button" onClick={clearTableSelection}>Clear</button>
-                  <button type="button" onClick={saveDailyLayoutSnapshot}><Save size={14} /> Save layout</button>
-                  <button type="button" className="bulk-danger" onClick={deleteSelectedTables} disabled={!selectedTableIds.length}><Trash2 size={14} /> Delete selected</button>
-                </div>
-                {selectedTableIds.length > 0 && (
-                  <div className="bulk-assignment-grid">
-                    <label><span>Assign server</span><select defaultValue="" onChange={(event) => { if (event.target.value !== "") applyBulkTablePatch({ serverId: event.target.value === "__none" ? null : event.target.value }); event.target.value = ""; }}><option value="">Choose…</option><option value="__none">No server</option>{servers.map((server) => <option key={server.id} value={server.id}>{server.initials} — {server.name}</option>)}</select></label>
-                    <label><span>Assign category</span><select defaultValue="" onChange={(event) => { if (event.target.value) applyBulkTablePatch({ tableType: event.target.value, type: event.target.value === "super_ambassadors" ? "super" : "regular" }); event.target.value = ""; }}><option value="">Choose…</option>{TABLE_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-                    <label><span>Assign group</span><select defaultValue="" onChange={(event) => { if (event.target.value !== "") applyBulkTablePatch({ groupId: event.target.value === "__none" ? null : event.target.value }); event.target.value = ""; }}><option value="">Choose…</option><option value="__none">No group</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
-                    <label><span>Status</span><select defaultValue="" onChange={(event) => { if (event.target.value) applyBulkTablePatch({ status: event.target.value, statusUpdatedAt: new Date().toISOString() }); event.target.value = ""; }}><option value="">Choose…</option><option value="available">Available</option><option value="occupied">Occupied</option></select></label>
-                  </div>
-                )}
-                <button type="button" className="designer-danger-action" onClick={clearAllTables}><Trash2 size={14} /> Delete all venue tables</button>
-                <small>Mac/Windows: ⌘/Ctrl-click to add tables, ⌘/Ctrl+A to select all, arrows to move, Delete/Backspace to remove, Esc to clear.</small>
-              </div>
               <div className="workspace-help-card">
                 <strong>Quick controls</strong>
                 <span>Click: select table</span>
@@ -2924,12 +2565,11 @@ const toggleAreaEditMode = useCallback(() => {
 
           {activeTool === "designer" && (
             <VenueDesignerPanel
-              venueId={activeRid}
               venueName={layoutConfig.name}
               areas={areas}
               selectedAreaId={selectedAreaId}
               tables={tables}
-              canManage={isLeadOrAdmin}
+              canManage={permissions.canEditLayout}
               canvasWidth={layoutConfig.canvasWidth}
               canvasHeight={layoutConfig.canvasHeight}
               onResizeCanvas={({ width, height }) => setCanvasSettingsByR((previous) => ({ ...previous, [activeRid]: { width, height } }))}
@@ -2939,17 +2579,10 @@ const toggleAreaEditMode = useCallback(() => {
                 if (id) setSelectedTableId(null);
               }}
               onGenerateTables={generateBulkTables}
-              onGenerateDailyTables={generateDailyTables}
               onDuplicateAreaWithTables={duplicateAreaWithTables}
               onExportLayout={exportVenueLayout}
               onImportLayout={importVenueLayout}
               onResetVenue={resetVenueLayout}
-              onSaveLayout={saveDailyLayoutSnapshot}
-              onToggleLayoutLock={toggleLayoutLock}
-              onResetTodaysTables={resetTodaysTables}
-              layoutLocked={layoutLocked}
-              layoutSavedAt={layoutBaselineMetaByR[activeRid] || null}
-              onClearTables={clearAllTables}
               blueprint={blueprintsByR[activeRid]}
               onBlueprintChange={(patch) => setBlueprintsByR((previous) => ({ ...previous, [activeRid]: { ...(previous[activeRid] || {}), ...patch } }))}
             />
@@ -2977,10 +2610,12 @@ const toggleAreaEditMode = useCallback(() => {
               venueName={layoutConfig.name}
               date={staffingDate}
               onDateChange={setStaffingDate}
+              areas={areas}
+              employees={employees}
               assignments={staffingAssignments}
               onChangeAssignment={updateStaffingAssignment}
               onSave={saveStaffing}
-              canManage={permissions.canManageStaffing}
+              canManage={permissions.canEditRestaurantSetup}
               saveState={staffingSaveState}
             />
           )}
@@ -3030,8 +2665,7 @@ const toggleAreaEditMode = useCallback(() => {
             servers={servers}
             groups={groups}
             selectedId={selectedTableId}
-            selectedIds={selectedTableIds}
-            onSelect={selectTable}
+            onSelect={setSelectedTableId}
             onMove={moveTable}
             permissions={permissions}
             zoom={zoom}
@@ -3042,8 +2676,6 @@ const toggleAreaEditMode = useCallback(() => {
             blueprint={blueprintsByR[activeRid]}
             onBeginTableMove={pushHistory}
             onBeginAreaInteraction={pushHistory}
-            onBoxSelect={selectTablesInBox}
-            layoutLocked={layoutLocked}
           />
         </section>
 
@@ -3071,15 +2703,6 @@ const toggleAreaEditMode = useCallback(() => {
           )}
         </InspectorPanel>
       </main>
-
-      {accountModalOpen && (
-        <AccountSecurityModal
-          profile={authSession.profile}
-          onClose={() => { setAccountModalOpen(false); setAccountPasswordOpen(false); }}
-          showPasswordForm={accountPasswordOpen}
-          onShowPasswordForm={setAccountPasswordOpen}
-        />
-      )}
 
       <WorkspaceFooter
         legend={<SeatingLegend />}
@@ -3121,10 +2744,6 @@ export default function SeatingLayoutApp() {
 
   if (["missing-profile", "incomplete-profile"].includes(authSession.status)) {
     return <ProfileSetupScreen authSession={authSession} />;
-  }
-
-  if (authSession.status === "password-change-required") {
-    return <PasswordChangeScreen profile={authSession.profile} required />;
   }
 
   if (authSession.status !== "authenticated") {

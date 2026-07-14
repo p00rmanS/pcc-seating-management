@@ -1,26 +1,105 @@
-import { CalendarDays, Save, UserRoundCheck } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Plus, Save, Trash2, UserRoundCheck } from "lucide-react";
 
-export default function DailyStaffingPanel({ venueName, date, onDateChange, areas, employees, assignments, onChangeAssignment, onSave, canManage, saveState }) {
-  const availableEmployees = Object.values(employees || {}).filter((employee) => employee?.active !== false);
+function shiftDate(value, days) {
+  const date = new Date(`${value}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+export default function DailyStaffingPanel({
+  venueName,
+  date,
+  onDateChange,
+  assignments,
+  onChangeAssignment,
+  onSave,
+  canManage,
+  saveState,
+}) {
+  const rows = Object.entries(assignments || {}).map(([id, value]) => ({ id, ...value }));
+
+  const addAssignment = () => {
+    if (!canManage) return;
+    const id = `assignment-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    onChangeAssignment(id, { assignment: "", displayName: "", active: true });
+  };
+
+  const updateRow = (id, patch) => {
+    const current = assignments?.[id] || {};
+    onChangeAssignment(id, { ...current, ...patch, active: true });
+  };
+
   return (
-    <div className="workspace-tool-content staffing-panel">
-      <div><h2 className="operation-heading"><CalendarDays size={15} /> Daily staffing</h2><p>Assign employees to areas for one date. Permanent employee records are not changed.</p></div>
-      <label className="designer-field"><span>Date</span><input type="date" value={date} onChange={(event) => onDateChange(event.target.value)} /></label>
-      <div className="staffing-assignment-list">
-        {areas.filter((area) => !area.hidden && !area.protected).map((area) => (
-          <label key={area.id} className="staffing-assignment-row">
-            <span><UserRoundCheck size={14} /> {area.label}</span>
-            <select value={assignments?.[area.id]?.employeeId || ""} onChange={(event) => {
-              const employee = availableEmployees.find((row) => String(row.ukgId || row.id) === event.target.value);
-              onChangeAssignment(area.id, employee ? { employeeId: String(employee.ukgId || employee.id), displayName: employee.preferredName || employee.fullName, areaId: area.id, areaName: area.label, active: true } : null);
-            }} disabled={!canManage}>
-              <option value="">Unassigned</option>
-              {availableEmployees.map((employee) => <option key={employee.ukgId || employee.id} value={employee.ukgId || employee.id}>{employee.preferredName || employee.fullName} — {employee.fullName}</option>)}
-            </select>
-          </label>
-        ))}
+    <div className="workspace-tool-content staffing-panel staffing-panel-v153">
+      <div className="staffing-heading-row">
+        <div>
+          <h2 className="operation-heading"><CalendarDays size={16} /> Daily Staffing</h2>
+          <p>Add today’s assignments and the employee responsible for each one. This list can change every day.</p>
+        </div>
+        <span className="staffing-venue-badge">{venueName}</span>
       </div>
-      <button type="button" className="workspace-primary-action" disabled={!canManage || saveState === "saving"} onClick={onSave}><Save size={14} /> {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : "Save staffing"}</button>
+
+      <div className="staffing-date-toolbar">
+        <button type="button" className="staffing-date-step" onClick={() => onDateChange(shiftDate(date, -1))} aria-label="Previous day"><ChevronLeft size={16} /></button>
+        <label className="staffing-date-field">
+          <span>Date</span>
+          <input
+            type="date"
+            value={date}
+            onChange={(event) => onDateChange(event.target.value)}
+            onClick={(event) => event.currentTarget.showPicker?.()}
+          />
+        </label>
+        <button type="button" className="staffing-date-step" onClick={() => onDateChange(shiftDate(date, 1))} aria-label="Next day"><ChevronRight size={16} /></button>
+        <button type="button" className="staffing-today-button" onClick={() => onDateChange(new Date().toLocaleDateString("en-CA", { timeZone: "Pacific/Honolulu" }))}>Today</button>
+      </div>
+
+      <div className="staffing-table-card">
+        <div className="staffing-table-header">
+          <span>Assignment / Area</span>
+          <span>Assigned employee</span>
+          <span aria-hidden="true" />
+        </div>
+
+        {rows.length === 0 ? (
+          <div className="staffing-empty-state">
+            <UserRoundCheck size={22} />
+            <strong>No assignments added yet</strong>
+            <span>Press “Add assignment” to build today’s staffing list.</span>
+          </div>
+        ) : (
+          <div className="staffing-custom-list">
+            {rows.map((row) => (
+              <div className="staffing-custom-row" key={row.id}>
+                <input
+                  type="text"
+                  value={row.assignment || row.areaName || ""}
+                  placeholder="Example: Front Lead, Line 1, Drinks"
+                  disabled={!canManage}
+                  onChange={(event) => updateRow(row.id, { assignment: event.target.value, areaName: event.target.value })}
+                />
+                <input
+                  type="text"
+                  value={row.displayName || ""}
+                  placeholder="Employee name"
+                  disabled={!canManage}
+                  onChange={(event) => updateRow(row.id, { displayName: event.target.value })}
+                />
+                <button type="button" className="staffing-remove-button" disabled={!canManage} onClick={() => onChangeAssignment(row.id, null)} title="Remove assignment"><Trash2 size={15} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button type="button" className="staffing-add-button" disabled={!canManage} onClick={addAssignment}><Plus size={15} /> Add assignment</button>
+      </div>
+
+      <div className="staffing-save-row">
+        <span>{saveState === "dirty" ? "Unsaved changes" : saveState === "error" ? "Unable to save—try again" : ""}</span>
+        <button type="button" className="workspace-primary-action staffing-save-button" disabled={!canManage || saveState === "saving"} onClick={onSave}>
+          <Save size={14} /> {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : "Save daily staffing"}
+        </button>
+      </div>
     </div>
   );
 }
