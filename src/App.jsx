@@ -170,7 +170,11 @@ const DEFAULT_AREAS_BY_RESTAURANT = {
 };
 
 function cloneDefaultAreas(restaurantId) {
-  return (DEFAULT_AREAS_BY_RESTAURANT[restaurantId] || []).map((area) => ({ ...area }));
+  return (DEFAULT_AREAS_BY_RESTAURANT[restaurantId] || []).map((area) => ({
+    labelPosition: "top",
+    labelAlign: "center",
+    ...area,
+  }));
 }
 
 // where each named zone's tables start out, before the user drags them
@@ -359,6 +363,7 @@ function EditableArea({
   onChange,
   onRequestCanvasExpand,
   onBeginInteraction,
+  displaySettings,
 }) {
   const interactionRef = useRef(null);
 
@@ -423,6 +428,8 @@ function EditableArea({
   };
 
   const shapeStyle = area.shape === "diamond" ? { transform: `rotate(${area.rotate + 45}deg)` } : { transform: `rotate(${area.rotate || 0}deg)` };
+  const labelPosition = area.labelPosition || "top";
+  const labelAlign = area.labelAlign || "center";
   const labelStyle = area.shape === "diamond" ? { transform: "rotate(-45deg)" } : undefined;
 
   return (
@@ -447,10 +454,15 @@ function EditableArea({
       }}
       title={editMode ? `${area.label}${area.locked ? " · locked" : " · drag to move"}` : area.label}
     >
-      <span className="editable-area-label" style={labelStyle}>
-        <span className={`inline-block w-2 h-2 rounded-full mr-1 ${area.status === "occupied" ? "bg-slate-500" : "bg-green-500"}`} />
-        {area.label}
-      </span>
+      {displaySettings.showAreaLabels !== false && (
+        <span
+          className={`editable-area-label label-${labelPosition} align-${labelAlign}`}
+          style={{ ...labelStyle, fontSize: displaySettings.areaLabelSizePx }}
+        >
+          <span className={`inline-block w-2 h-2 rounded-full mr-1 ${area.status === "occupied" ? "bg-slate-500" : "bg-green-500"}`} />
+          {area.label}
+        </span>
+      )}
 
       {editMode && selected && !area.locked && (
         <>
@@ -587,6 +599,18 @@ function AreaEditor({
                   <option value="diamond">Diamond</option>
                 </select>
               </label>
+              <label>
+                Label position
+                <select value={selectedArea.labelPosition || "top"} onChange={(event) => onUpdate(selectedArea.id, { labelPosition: event.target.value })}>
+                  <option value="top">Top</option><option value="bottom">Bottom</option><option value="left">Left</option><option value="right">Right</option><option value="center">Center</option>
+                </select>
+              </label>
+              <label>
+                Label alignment
+                <select value={selectedArea.labelAlign || "center"} onChange={(event) => onUpdate(selectedArea.id, { labelAlign: event.target.value })}>
+                  <option value="left">Left</option><option value="center">Center</option><option value="right">Right</option>
+                </select>
+              </label>
               {(selectedArea.areaKind ?? "seating") === "seating" ? (
               <div className="area-status-control">
                 <span className="text-xs font-medium text-slate-600">Operational status</span>
@@ -655,6 +679,7 @@ function AreaEditor({
 
 function TableChip({
   table,
+  displaySettings,
   server,
   group,
   isSelected,
@@ -680,6 +705,33 @@ function TableChip({
   const displaySize = getTableDisplaySize(table);
   const borderColor = table.color || server?.color || "#94a3b8";
   const isSplitChild = !!table.parentId;
+
+  const tableNumberSizeMap = { small: 12, medium: 16, large: 22 };
+  const capacitySizeMap = { small: 11, medium: 15, large: 19 };
+  const resolveTableFontSize = (mode, customValue, globalValue, sizeMap) => {
+    if (!mode || mode === "default") return globalValue;
+    if (mode === "custom") return Math.max(8, Math.min(72, Number(customValue) || globalValue));
+    return sizeMap[mode] || globalValue;
+  };
+  const effectiveTableNumberSize = resolveTableFontSize(
+    table.tableNumberSizeMode,
+    table.tableNumberCustomSize,
+    displaySettings.tableNumberSizePx,
+    tableNumberSizeMap
+  );
+  const effectiveCapacitySize = resolveTableFontSize(
+    table.capacitySizeMode,
+    table.capacityCustomSize,
+    displaySettings.capacitySizePx,
+    capacitySizeMap
+  );
+  const effectiveTextColor = table.textColorMode === "custom"
+    ? (table.customTextColor || "#ffffff")
+    : table.textColorMode === "white"
+      ? "#ffffff"
+      : table.textColorMode === "black"
+        ? "#111827"
+        : displaySettings.tableTextColor === "black" ? "#111827" : "#ffffff";
 
   const onPointerDown = (e) => {
     e.stopPropagation();
@@ -735,7 +787,7 @@ function TableChip({
       className={`select-none ${canDrag ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"}`}
     >
       <div
-        className={`relative flex flex-col items-center justify-center text-white text-xs font-semibold shadow-md transition-transform hover:scale-105 ${
+        className={`table-chip relative flex flex-col items-center justify-center font-semibold shadow-md transition-transform hover:scale-105 ${displaySettings.accessibilityMode ? "accessibility-table" : ""} ${displaySettings.highlightEmptyTables && table.status !== "occupied" ? "highlight-empty-table" : ""} ${
           isSelected ? "ring-4 ring-offset-1 ring-purple-500" : ""
         } ${isSplitChild ? "ring-2 ring-offset-1 ring-orange-500" : ""} ${
           typeDefinition.shape === "circle" ? "rounded-full" : "rounded-lg"
@@ -744,7 +796,8 @@ function TableChip({
           width: displaySize.width,
           height: displaySize.height,
           background: fill,
-          border: `2px solid ${borderColor}`,
+          border: `${displaySettings.accessibilityMode ? 3 : 2}px solid ${borderColor}`,
+          color: effectiveTextColor,
         }}
         title={`Table ${table.number} · ${table.capacity} pax`}
       >
@@ -759,11 +812,11 @@ function TableChip({
             split
           </span>
         )}
-        {table.showTableNumber !== false && <span className="text-xs leading-none">{table.number}</span>}
-        <span className="text-[9px] opacity-90 leading-none mt-0.5">{table.capacity}p</span>
-        {server && table.showServerInitials !== false && <span className="text-[8px] opacity-90 leading-none mt-0.5">{server.initials}</span>}
-        {table.showGuestName && table.guestName && <span className="table-chip-guest">{table.guestName}</span>}
-        {table.showGuestInitials && table.guestInitials && <span className="table-chip-guest-initials">{table.guestInitials}</span>}
+        {displaySettings.showTableNumbers !== false && table.showTableNumber !== false && <span className="table-number-value" style={{ fontSize: effectiveTableNumberSize }}>{table.number}</span>}
+        {displaySettings.showPax !== false && <span className="table-capacity-value" style={{ fontSize: effectiveCapacitySize }}>{table.capacity}</span>}
+        {displaySettings.showServerNames !== false && server && table.showServerInitials !== false && <span className="table-server-value">{server.initials}</span>}
+        {displaySettings.showCelebrations !== false && table.showGuestName && table.guestName && <span className="table-chip-guest">{table.guestName}</span>}
+        {displaySettings.showCelebrations !== false && table.showGuestInitials && table.guestInitials && <span className="table-chip-guest-initials">{table.guestInitials}</span>}
       </div>
     </div>
   );
@@ -832,7 +885,7 @@ function SplitEditor({ table, onCancel, onConfirm }) {
 
 // ---------- table detail / editor panel ----------
 
-function TableEditor({ table, siblings, parentTable, servers, groups, permissions, onClose, onUpdate, onSplit, onMerge, onDelete }) {
+function TableEditor({ table, siblings, parentTable, servers, groups, permissions, displaySettings, onClose, onUpdate, onSplit, onMerge, onDelete }) {
   const [splitting, setSplitting] = useState(false);
   const anySiblingOccupied = (siblings || []).some((s) => s.status === "occupied") || table.status === "occupied";
   const assignedServer = servers.find((s) => s.id === table.serverId);
@@ -984,6 +1037,90 @@ function TableEditor({ table, siblings, parentTable, servers, groups, permission
         </div>
       </div>
 
+      <div className="table-text-customization">
+        <div className="table-customization-heading">Table text appearance</div>
+        <p className="table-customization-help">Use Default to follow the restaurant-wide Display settings. Overrides affect only this table.</p>
+
+        <label className="text-xs font-medium text-slate-500">Text color</label>
+        <select
+          value={table.textColorMode || "default"}
+          onChange={(e) => onUpdate(table.id, { textColorMode: e.target.value })}
+          className="w-full mt-1 border border-slate-300 rounded px-2 py-1.5 text-sm"
+        >
+          <option value="default">Default ({displaySettings?.tableTextColor === "black" ? "Black" : "White"})</option>
+          <option value="white">White</option>
+          <option value="black">Black</option>
+          <option value="custom">Custom color</option>
+        </select>
+        {table.textColorMode === "custom" && (
+          <div className="table-custom-color-row">
+            <input
+              type="color"
+              value={table.customTextColor || "#ffffff"}
+              onChange={(e) => onUpdate(table.id, { customTextColor: e.target.value })}
+              aria-label="Custom table text color"
+            />
+            <input
+              type="text"
+              value={table.customTextColor || "#ffffff"}
+              onChange={(e) => {
+                const value = e.target.value;
+                onUpdate(table.id, { customTextColor: value });
+              }}
+              placeholder="#FFFFFF"
+              maxLength={7}
+            />
+          </div>
+        )}
+
+        <label className="text-xs font-medium text-slate-500 mt-3 block">Table number size</label>
+        <select
+          value={table.tableNumberSizeMode || "default"}
+          onChange={(e) => onUpdate(table.id, { tableNumberSizeMode: e.target.value })}
+          className="w-full mt-1 border border-slate-300 rounded px-2 py-1.5 text-sm"
+        >
+          <option value="default">Default</option>
+          <option value="small">Small</option>
+          <option value="medium">Medium</option>
+          <option value="large">Large</option>
+          <option value="custom">Custom size</option>
+        </select>
+        {table.tableNumberSizeMode === "custom" && (
+          <label className="table-custom-px-row"><span>Custom size</span><input type="number" min="8" max="72" value={table.tableNumberCustomSize || 24} onChange={(e) => onUpdate(table.id, { tableNumberCustomSize: Math.max(8, Math.min(72, Number(e.target.value) || 8)) })}/><span>px</span></label>
+        )}
+
+        <label className="text-xs font-medium text-slate-500 mt-3 block">Capacity size</label>
+        <select
+          value={table.capacitySizeMode || "default"}
+          onChange={(e) => onUpdate(table.id, { capacitySizeMode: e.target.value })}
+          className="w-full mt-1 border border-slate-300 rounded px-2 py-1.5 text-sm"
+        >
+          <option value="default">Default</option>
+          <option value="small">Small</option>
+          <option value="medium">Medium</option>
+          <option value="large">Large</option>
+          <option value="custom">Custom size</option>
+        </select>
+        {table.capacitySizeMode === "custom" && (
+          <label className="table-custom-px-row"><span>Custom size</span><input type="number" min="8" max="72" value={table.capacityCustomSize || 20} onChange={(e) => onUpdate(table.id, { capacityCustomSize: Math.max(8, Math.min(72, Number(e.target.value) || 8)) })}/><span>px</span></label>
+        )}
+
+        <button
+          type="button"
+          className="table-reset-appearance"
+          onClick={() => onUpdate(table.id, {
+            textColorMode: "default",
+            customTextColor: "#ffffff",
+            tableNumberSizeMode: "default",
+            tableNumberCustomSize: null,
+            capacitySizeMode: "default",
+            capacityCustomSize: null,
+          })}
+        >
+          Reset this table to global defaults
+        </button>
+      </div>
+
       <div>
         <label className="text-xs font-medium text-slate-500">Table type</label>
         <select
@@ -1107,6 +1244,9 @@ function FloorPlanCanvas({
   onBeginAreaInteraction,
   onBoxSelect,
   layoutLocked = false,
+  displaySettings,
+  panPosition,
+  onPanChange,
 }) {
   const { canvasWidth, canvasHeight, minZoom, maxZoom, defaultZoom } = layoutConfig;
 
@@ -1122,6 +1262,21 @@ function FloorPlanCanvas({
   const panRef = useRef(null);
   const lassoRef = useRef(null);
   const [selectionBox, setSelectionBox] = useState(null);
+
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    node.scrollLeft = Number(panPosition?.x) || 0;
+    node.scrollTop = Number(panPosition?.y) || 0;
+  }, [layoutConfig.name]);
+
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (!node) return undefined;
+    const savePan = () => onPanChange?.({ x: node.scrollLeft, y: node.scrollTop });
+    node.addEventListener("scroll", savePan, { passive: true });
+    return () => node.removeEventListener("scroll", savePan);
+  }, [onPanChange]);
 
   const startLasso = (event) => {
     if (areaEditMode || event.button !== 0 || event.shiftKey || event.target !== event.currentTarget) return;
@@ -1208,6 +1363,7 @@ function FloorPlanCanvas({
                 onChange={onUpdateArea}
                 onRequestCanvasExpand={onRequestCanvasExpand}
                 onBeginInteraction={onBeginAreaInteraction}
+                displaySettings={displaySettings}
               />
             ))}
 
@@ -1217,6 +1373,7 @@ function FloorPlanCanvas({
                 <TableChip
                   key={table.id}
                   table={table}
+                  displaySettings={displaySettings}
                   server={serverById.get(table.serverId)}
                   group={groupById.get(table.groupId)}
                   isSelected={selectedId === table.id || selectedIds.includes(table.id)}
@@ -1538,10 +1695,21 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
               typeof saved?.zoom === "number"
                 ? saved.zoom
                 : RESTAURANT_LAYOUT_CONFIG[restaurant.id]?.defaultZoom ?? 1,
-            showGrid:
-              typeof saved?.showGrid === "boolean"
-                ? saved.showGrid
-                : RESTAURANT_LAYOUT_CONFIG[restaurant.id]?.showGridDefault ?? false,
+            showGrid: typeof saved?.showGrid === "boolean" ? saved.showGrid : RESTAURANT_LAYOUT_CONFIG[restaurant.id]?.showGridDefault ?? false,
+            tableNumberSize: saved?.tableNumberSize || "medium",
+            capacitySize: saved?.capacitySize || "large",
+            tableTextColor: saved?.tableTextColor === "black" ? "black" : "white",
+            accessibilityMode: Boolean(saved?.accessibilityMode),
+            showTableNumbers: saved?.showTableNumbers !== false,
+            showPax: saved?.showPax !== false,
+            showAreaLabels: saved?.showAreaLabels !== false,
+            showServerNames: saved?.showServerNames !== false,
+            showCelebrations: saved?.showCelebrations !== false,
+            highlightEmptyTables: Boolean(saved?.highlightEmptyTables),
+            sidebarCollapsed: Boolean(saved?.sidebarCollapsed),
+            inspectorCollapsed: Boolean(saved?.inspectorCollapsed),
+            operationsView: Boolean(saved?.operationsView),
+            pan: saved?.pan || { x: 0, y: 0 },
           },
         ];
       })
@@ -1555,13 +1723,35 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
   const zoom = viewSettingsByRestaurant[activeRid]?.zoom ?? layoutConfig.defaultZoom;
   const setZoom = (z) =>
     setViewSettingsByRestaurant((prev) => ({ ...prev, [activeRid]: { ...prev[activeRid], zoom: z } }));
+  const updateViewSettings = (patch) => setViewSettingsByRestaurant((prev) => ({ ...prev, [activeRid]: { ...prev[activeRid], ...patch } }));
+  const tableNumberSizeMap = { small: 12, medium: 16, large: 22 };
+  const capacitySizeMap = { small: 11, medium: 15, large: 19 };
+  const rawDisplaySettings = viewSettingsByRestaurant[activeRid] || {};
+  const displaySettings = {
+    ...rawDisplaySettings,
+    tableNumberSizePx: rawDisplaySettings.accessibilityMode ? 22 : tableNumberSizeMap[rawDisplaySettings.tableNumberSize || "medium"],
+    capacitySizePx: rawDisplaySettings.accessibilityMode ? 19 : capacitySizeMap[rawDisplaySettings.capacitySize || "large"],
+    tableTextColor: rawDisplaySettings.tableTextColor === "black" ? "black" : "white",
+    areaLabelSizePx: rawDisplaySettings.accessibilityMode ? 17 : 12,
+  };
 
   const [selectedTableId, setSelectedTableId] = useState(null);
   const [selectedTableIds, setSelectedTableIds] = useState([]);
   const [bulkSelectMode, setBulkSelectMode] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
-  const [operationsView, setOperationsView] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => Boolean(viewSettingsByRestaurant[activeRid]?.sidebarCollapsed));
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(() => Boolean(viewSettingsByRestaurant[activeRid]?.inspectorCollapsed));
+  const [operationsView, setOperationsView] = useState(() => Boolean(viewSettingsByRestaurant[activeRid]?.operationsView));
+  useEffect(() => {
+    const saved = viewSettingsByRestaurant[activeRid] || {};
+    setSidebarCollapsed(Boolean(saved.sidebarCollapsed));
+    setInspectorCollapsed(Boolean(saved.inspectorCollapsed));
+    setOperationsView(Boolean(saved.operationsView));
+  }, [activeRid]);
+
+  useEffect(() => {
+    updateViewSettings({ sidebarCollapsed, inspectorCollapsed, operationsView });
+  }, [sidebarCollapsed, inspectorCollapsed, operationsView]);
+
   const tableClipboardRef = useRef([]);
   const [activeTool, setActiveTool] = useState("tables");
   const [quickTableType, setQuickTableType] = useState("regular");
@@ -2797,6 +2987,7 @@ const toggleAreaEditMode = useCallback(() => {
     { id: "help", label: "Help", icon: CircleHelp },
     { id: "testing", label: "Testing", icon: FlaskConical },
     { id: "layout", label: "Layout", icon: Maximize2 },
+    { id: "display", label: "Display", icon: Eye },
   ];
 
   return (
@@ -3026,6 +3217,20 @@ const toggleAreaEditMode = useCallback(() => {
             onExport={exportVenueLayout}
           />}
 
+          {activeTool === "display" && (
+            <div className="workspace-tool-content display-settings-panel">
+              <div><h2>Accessibility & Display</h2><p>One set of controls updates the entire active restaurant instantly.</p></div>
+              <label className="accessibility-switch"><span><strong>Accessibility Mode</strong><small>Larger text, thicker borders, and stronger contrast.</small></span><input type="checkbox" checked={displaySettings.accessibilityMode} onChange={(e) => updateViewSettings({ accessibilityMode: e.target.checked })} /></label>
+              <fieldset><legend>Table Number Size</legend>{["small","medium","large"].map(v => <label key={v}><input type="radio" name="tableNumberSize" checked={displaySettings.tableNumberSize===v} onChange={() => updateViewSettings({tableNumberSize:v})}/><span>{v[0].toUpperCase()+v.slice(1)}</span></label>)}</fieldset>
+              <fieldset><legend>Capacity Size</legend>{["small","medium","large"].map(v => <label key={v}><input type="radio" name="capacitySize" checked={displaySettings.capacitySize===v} onChange={() => updateViewSettings({capacitySize:v})}/><span>{v[0].toUpperCase()+v.slice(1)}</span></label>)}</fieldset>
+              <fieldset><legend>Table Text Color</legend>{["white","black"].map(v => <label key={v}><input type="radio" name="tableTextColor" checked={displaySettings.tableTextColor===v} onChange={() => updateViewSettings({tableTextColor:v})}/><span>{v[0].toUpperCase()+v.slice(1)}</span></label>)}</fieldset>
+              <div className="display-toggle-list">
+                {[['showTableNumbers','Table Numbers'],['showPax','Pax'],['showAreaLabels','Area Labels'],['showServerNames','Server Names'],['showCelebrations','Celebrations'],['highlightEmptyTables','Highlight Empty Tables']].map(([key,label]) => <label key={key}><input type="checkbox" checked={Boolean(displaySettings[key])} onChange={(e)=>updateViewSettings({[key]:e.target.checked})}/><span>{label}</span></label>)}
+              </div>
+              <div className="workspace-help-card"><strong>Workspace memory</strong><span>Full Floor, hidden panels, zoom, and pan position are saved automatically per venue.</span></div>
+            </div>
+          )}
+
           {activeTool === "layout" && (
             <div className="workspace-tool-content">
               <div>
@@ -3080,6 +3285,9 @@ const toggleAreaEditMode = useCallback(() => {
             onBeginAreaInteraction={pushHistory}
             onBoxSelect={selectTablesInBox}
             layoutLocked={layoutLocked}
+            displaySettings={displaySettings}
+            panPosition={displaySettings.pan}
+            onPanChange={(pan) => updateViewSettings({ pan })}
           />
         </section>
 
@@ -3100,6 +3308,7 @@ const toggleAreaEditMode = useCallback(() => {
               servers={servers}
               groups={groups}
               permissions={permissions}
+              displaySettings={displaySettings}
               onClose={() => setSelectedTableId(null)}
               onUpdate={updateTable}
               onSplit={splitTable}

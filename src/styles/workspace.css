@@ -1230,3 +1230,108 @@
   .workspace-inspector.collapsed { width:auto; min-height:48px; }
   .operations-view-toolbar button span { display:none; }
 }
+
+/* v15.5 accessibility, global display, and draw.io-style area labels */
+.editable-area-label { position:absolute; z-index:4; width:max-content; max-width:180%; padding:3px 7px; border-radius:6px; background:rgba(255,255,255,.94); color:#1e293b; font-weight:800; line-height:1.15; pointer-events:none; box-shadow:0 1px 4px rgba(15,23,42,.12); }
+.editable-area-label.label-top { top:-30px; }
+.editable-area-label.label-bottom { bottom:-30px; }
+.editable-area-label.label-left { left:-8px; top:50%; transform:translate(-100%,-50%); }
+.editable-area-label.label-right { right:-8px; top:50%; transform:translate(100%,-50%); }
+.editable-area-label.label-center { top:50%; left:50%; transform:translate(-50%,-50%); }
+.editable-area-label.label-top.align-left,.editable-area-label.label-bottom.align-left { left:0; }
+.editable-area-label.label-top.align-center,.editable-area-label.label-bottom.align-center { left:50%; transform:translateX(-50%); }
+.editable-area-label.label-top.align-right,.editable-area-label.label-bottom.align-right { right:0; }
+.editable-area-label.label-left.align-left,.editable-area-label.label-right.align-left { top:18%; }
+.editable-area-label.label-left.align-center,.editable-area-label.label-right.align-center { top:50%; }
+.editable-area-label.label-left.align-right,.editable-area-label.label-right.align-right { top:82%; }
+.table-number-value,.table-capacity-value,.table-server-value { display:block; line-height:1; white-space:nowrap; text-shadow:0 1px 2px rgba(0,0,0,.35); }
+.table-capacity-value { margin-top:3px; opacity:.98; }
+.table-server-value { margin-top:3px; font-size:9px; }
+.accessibility-table { filter:contrast(1.12); box-shadow:0 4px 10px rgba(15,23,42,.28); }
+.display-settings-panel fieldset { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; border:1px solid #e2e8f0; border-radius:10px; padding:10px; }
+.display-settings-panel legend { padding:0 4px; color:#475569; font-size:.68rem; font-weight:800; }
+.display-settings-panel fieldset label,.display-toggle-list label { display:flex; align-items:center; gap:7px; font-size:.7rem; color:#334155; }
+.display-settings-panel fieldset label { justify-content:center; padding:7px 4px; border-radius:7px; background:#f8fafc; }
+.display-toggle-list { display:grid; gap:2px; border:1px solid #e2e8f0; border-radius:10px; padding:7px; }
+.display-toggle-list label { padding:8px; border-radius:7px; }
+.display-toggle-list label:hover { background:#f8fafc; }
+.accessibility-switch { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px; border:1px solid #c7d2fe; border-radius:11px; background:#eef2ff; }
+.accessibility-switch span { display:grid; gap:3px; }
+.accessibility-switch strong { color:#312e81; font-size:.75rem; }
+.accessibility-switch small { color:#6366f1; font-size:.62rem; line-height:1.35; }
+.accessibility-switch input { width:20px; height:20px; }
+.highlight-empty-table { outline:4px solid rgba(250,204,21,.9); outline-offset:3px; }
+
+/* v15.5.2 — per-table text appearance overrides */
+.table-text-customization {
+  padding: 12px;
+  border: 1px solid #dbe3ee;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+.table-customization-heading {
+  font-size: 12px;
+  font-weight: 800;
+  color: #334155;
+  margin-bottom: 3px;
+}
+.table-customization-help {
+  margin: 0 0 10px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #64748b;
+}
+.table-custom-color-row {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+}
+.table-custom-color-row input[type="color"] {
+  width: 44px;
+  height: 36px;
+  padding: 2px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+}
+.table-custom-color-row input[type="text"] {
+  width: 100%;
+  height: 36px;
+  padding: 0 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  text-transform: uppercase;
+}
+.table-custom-px-row {
+  display: grid;
+  grid-template-columns: 1fr 72px 22px;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  font-size: 11px;
+  color: #64748b;
+}
+.table-custom-px-row input {
+  width: 72px;
+  padding: 6px 7px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #fff;
+  color: #0f172a;
+}
+.table-reset-appearance {
+  width: 100%;
+  margin-top: 12px;
+  padding: 7px 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+}
+.table-reset-appearance:hover { background: #f1f5f9; }

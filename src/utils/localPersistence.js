@@ -24,6 +24,7 @@ function normalizeSnapshot(parsed) {
     groupsByR: isObject(parsed.groupsByR) ? parsed.groupsByR : {},
     areasByR: isObject(parsed.areasByR) ? parsed.areasByR : {},
     venueOperationsByR: isObject(parsed.venueOperationsByR) ? parsed.venueOperationsByR : {},
+    canvasSettingsByR: isObject(parsed.canvasSettingsByR) ? parsed.canvasSettingsByR : {},
     viewSettingsByRestaurant: isObject(parsed.viewSettingsByRestaurant)
       ? parsed.viewSettingsByRestaurant
       : {},
