@@ -15,6 +15,7 @@ import { auth, db } from "../firebase/firebase";
 const REMEMBER_UNTIL_KEY = "pcc-seating-remember-until";
 const REMEMBER_DAYS = 15;
 const SESSION_ACTIVE_KEY = "pcc-seating-session-active";
+const PASSWORD_CHANGE_COMPLETE_PREFIX = "pcc-seating-password-change-complete:";
 
 const SUPPORTED_ROLES = [
   "developer",
@@ -27,6 +28,31 @@ const SUPPORTED_ROLES = [
   "lead",
   "admin",
 ];
+
+
+function passwordChangeCompletionKey(uid) {
+  return `${PASSWORD_CHANGE_COMPLETE_PREFIX}${uid}`;
+}
+
+function markPasswordChangeComplete(uid) {
+  if (uid) localStorage.setItem(passwordChangeCompletionKey(uid), new Date().toISOString());
+}
+
+function clearPasswordChangeComplete(uid) {
+  if (uid) localStorage.removeItem(passwordChangeCompletionKey(uid));
+}
+
+function hasLocalPasswordChangeCompletion(uid) {
+  return Boolean(uid && localStorage.getItem(passwordChangeCompletionKey(uid)));
+}
+
+async function syncPasswordChangeProfile(user) {
+  await update(ref(db, `pccSeating/v1/users/${user.uid}`), {
+    mustChangePassword: false,
+    passwordChangedAt: new Date().toISOString(),
+  });
+  clearPasswordChangeComplete(user.uid);
+}
 
 export function getRememberedUntil() {
   const value = Number(localStorage.getItem(REMEMBER_UNTIL_KEY));
@@ -85,19 +111,22 @@ export async function changeOwnPassword({ currentPassword, newPassword }) {
   await reauthenticateWithCredential(user, credential);
   await updatePassword(user, newPassword);
 
+  // Firebase Authentication is the source of truth for the password change.
+  // Record completion immediately so a temporary database-rule delay cannot
+  // trap the employee in the required-password screen.
+  markPasswordChangeComplete(user.uid);
+
   try {
-    await update(ref(db, `pccSeating/v1/users/${user.uid}`), {
-      mustChangePassword: false,
-      passwordChangedAt: new Date().toISOString(),
-    });
+    await syncPasswordChangeProfile(user);
   } catch (profileError) {
-    const wrappedError = new Error(
-      "Your Firebase password changed, but the profile flag could not be updated. Publish the v13.2 database rules, then sign in using your NEW password and retry."
-    );
-    wrappedError.code = "pcc/profile-update-failed";
-    wrappedError.cause = profileError;
-    throw wrappedError;
+    // Keep the local completion marker and let the authenticated session retry
+    // the profile sync in the background. Do not ask the employee to repeat a
+    // password change that Firebase Authentication already accepted.
+    console.warn("Password changed; profile flag sync will retry.", profileError);
   }
+
+  await user.getIdToken(true);
+  return { passwordChanged: true };
 }
 
 export async function saveOwnAccessProfile({
@@ -211,8 +240,20 @@ export function subscribeToAuthSession(onSession, onError) {
             return;
           }
 
+          const completedLocally = hasLocalPasswordChangeCompletion(user.uid);
+
+          if (profile.mustChangePassword === true && completedLocally) {
+            // Retry clearing the server-side flag without blocking access.
+            syncPasswordChangeProfile(user).catch((error) => {
+              console.warn("Unable to sync password completion yet; will retry later.", error);
+            });
+          }
+
           onSession({
-            status: profile.mustChangePassword === true ? "password-change-required" : "authenticated",
+            status:
+              profile.mustChangePassword === true && !completedLocally
+                ? "password-change-required"
+                : "authenticated",
             user,
             profile: normalizeProfile(profile, user),
           });

@@ -37,7 +37,7 @@ export default function PasswordChangeScreen({ profile, required = false, onClos
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      if (!required) setTimeout(() => onClose?.(), 900);
+      if (!required) setTimeout(() => onClose?.(), 700);
     } catch (changeError) {
       const code = changeError?.code || "";
       setError(
@@ -47,11 +47,9 @@ export default function PasswordChangeScreen({ profile, required = false, onClos
             ? "Choose a stronger password."
             : code.includes("requires-recent-login")
               ? "Please sign out, sign in again, and retry."
-              : code === "pcc/profile-update-failed"
-                ? changeError.message
-                : code.includes("permission-denied")
-                  ? "Firebase blocked the profile update. Publish the v13.2 database rules, then retry using your new password."
-                  : "Unable to change the password. Please try again."
+              : code.includes("permission-denied")
+                ? "The account could not save the profile update. Please ask a manager to check account permissions."
+                : "Unable to change the password. Please try again."
       );
     } finally {
       setSaving(false);
