@@ -33,7 +33,7 @@ export default function DailySetupGenerator({ venueId, venueName, canManage, lay
   const [tableType, setTableType] = useState(() => defaultTypeForVenue(venueName));
   const [message, setMessage] = useState("");
   const [working, setWorking] = useState(false);
-  const [generationMode, setGenerationMode] = useState("add-missing");
+  const [generationMode, setGenerationMode] = useState("add-batch");
 
   useEffect(() => {
     try {
@@ -79,6 +79,10 @@ export default function DailySetupGenerator({ venueId, venueName, canManage, lay
         .filter((row) => row.count > 0);
       const result = await Promise.resolve(onGenerate?.({ entries, startingNumber, tableType, tableSize: 34, mode: generationMode }));
       setMessage(result?.message || (result?.ok ? `${result.count} tables generated for ${venueName}.` : "Unable to generate today’s tables."));
+      if (result?.ok && result.count > 0 && generationMode === "add-batch") {
+        setRows((current) => current.map((row) => ({ ...row, count: 0 })));
+        if (Number.isFinite(Number(result.nextStartingNumber))) setStartingNumber(Number(result.nextStartingNumber));
+      }
     } catch (error) {
       console.error("Daily setup generation failed:", error);
       setMessage(`Generator error: ${error?.message || "Unknown error"}`);
@@ -93,7 +97,7 @@ export default function DailySetupGenerator({ venueId, venueName, canManage, lay
         <div className="daily-setup-v152-icon"><CalendarDays size={17} /></div>
         <div>
           <h2>Today&apos;s Table Setup</h2>
-          <p>Copy the counts from your boss&apos;s setup sheet, then generate the full venue in one click.</p>
+          <p>Enter only the new batch you need. Each click adds tables without deleting or moving tables already on the floor.</p>
         </div>
       </header>
 
@@ -138,8 +142,8 @@ export default function DailySetupGenerator({ venueId, venueName, canManage, lay
       </div>
 
       <div className="daily-generator-mode" role="group" aria-label="Generation behavior">
-        <button type="button" className={generationMode === "add-missing" ? "active" : ""} onClick={() => setGenerationMode("add-missing")}>
-          <PlusCircle size={14} /> Add missing tables
+        <button type="button" className={generationMode === "add-batch" ? "active" : ""} onClick={() => setGenerationMode("add-batch")}>
+          <PlusCircle size={14} /> Add this batch
         </button>
         <button type="button" className={generationMode === "replace" ? "active danger" : ""} onClick={() => setGenerationMode("replace")}>
           <RefreshCw size={14} /> Replace all tables
@@ -149,11 +153,11 @@ export default function DailySetupGenerator({ venueId, venueName, canManage, lay
       <div className="daily-setup-v152-summary">
         <span><strong>{totalTables}</strong> tables</span>
         <span><strong>{totalSeats}</strong> seats</span>
-        <small>{generationMode === "add-missing" ? "Safe mode: keeps tables already positioned and adds only the missing quantities." : "Replace mode: deletes today’s tables and rebuilds them. Areas and landmarks remain safe."}</small>
+        <small>{generationMode === "add-batch" ? "Safe mode: every click adds exactly the counts entered above, then clears the counts for the next batch." : "Replace mode: deletes today’s tables and rebuilds them. Areas and landmarks remain safe."}</small>
       </div>
 
       <button type="button" className="daily-setup-v152-generate" disabled={!canManage || layoutLocked || working || totalTables === 0} onClick={generate}>
-        <Sparkles size={15} /> {working ? "Generating…" : generationMode === "add-missing" ? `Update Today’s Setup` : `Replace with ${totalTables || "Today’s"} Tables`}
+        <Sparkles size={15} /> {working ? "Generating…" : generationMode === "add-batch" ? `Add ${totalTables || "New"} Tables` : `Replace with ${totalTables || "Today’s"} Tables`}
       </button>
       <button type="button" className="daily-setup-v152-clear" onClick={clearCounts}><RotateCcw size={13} /> Clear counts</button>
 

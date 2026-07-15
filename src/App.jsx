@@ -2537,22 +2537,12 @@ const toggleAreaEditMode = useCallback(() => {
       .filter((entry) => entry.count > 0);
     if (!requestedEntries.length) return { ok: false, message: "Enter at least one table count." };
 
-    const mode = config.mode === "replace" ? "replace" : "add-missing";
-    const currentRootTables = tables.filter((table) => !table.parentId && !(table.childIds && table.childIds.length));
-    const existingByCapacity = currentRootTables.reduce((counts, table) => {
-      const capacity = Math.max(1, Number(table.capacity) || 1);
-      counts[capacity] = (counts[capacity] || 0) + 1;
-      return counts;
-    }, {});
-
-    const entriesToCreate = mode === "replace"
-      ? requestedEntries
-      : requestedEntries.map((entry) => ({ ...entry, count: Math.max(0, entry.count - (existingByCapacity[entry.capacity] || 0)) })).filter((entry) => entry.count > 0);
+    // Default behavior is intentionally batch-based: every click adds exactly
+    // what the lead entered. This avoids the confusing target-total behavior
+    // where a second run could appear to do nothing after tables already existed.
+    const mode = config.mode === "replace" ? "replace" : "add-batch";
+    const entriesToCreate = requestedEntries;
     const totalCount = entriesToCreate.reduce((sum, entry) => sum + entry.count, 0);
-
-    if (mode === "add-missing" && totalCount === 0) {
-      return { ok: true, count: 0, message: "Today’s setup already has those quantities. No tables were deleted or moved." };
-    }
 
     pushHistory();
     const startingNumber = Number.isFinite(Number(config.startingNumber)) ? Number(config.startingNumber) : 1;
@@ -2619,7 +2609,7 @@ const toggleAreaEditMode = useCallback(() => {
     if (farthest) requestCanvasExpansion(farthest.pos.x + tableSize + 600, farthest.pos.y + tableSize + 600);
     setSelectedTableId(null);
     setSelectedTableIds([]);
-    setTables(mode === "replace" ? nextTables : [...tables, ...nextTables]);
+    setTables((previousTables) => mode === "replace" ? nextTables : [...previousTables, ...nextTables]);
 
     return {
       ok: true,
@@ -2627,7 +2617,7 @@ const toggleAreaEditMode = useCallback(() => {
       nextStartingNumber: nextNumber,
       message: mode === "replace"
         ? `${totalCount} tables rebuilt. Existing daily tables were replaced.`
-        : `${totalCount} missing table${totalCount === 1 ? "" : "s"} added. Existing tables and their positions were preserved.`,
+        : `${totalCount} table${totalCount === 1 ? "" : "s"} added as a new batch. Existing tables and their positions were preserved.`,
     };
   }, [areas, layoutLocked, permissions.canManageTables, pushHistory, requestCanvasExpansion, setTables, tables]);
 
