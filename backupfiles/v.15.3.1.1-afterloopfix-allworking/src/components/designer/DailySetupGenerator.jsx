@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarDays, RotateCcw, Sparkles, PlusCircle, RefreshCw } from "lucide-react";
+import { CalendarDays, RotateCcw, Sparkles } from "lucide-react";
 
 const DEFAULT_ROWS = [
   { capacity: 2, count: 0 },
@@ -33,7 +33,6 @@ export default function DailySetupGenerator({ venueId, venueName, canManage, lay
   const [tableType, setTableType] = useState(() => defaultTypeForVenue(venueName));
   const [message, setMessage] = useState("");
   const [working, setWorking] = useState(false);
-  const [generationMode, setGenerationMode] = useState("add-missing");
 
   useEffect(() => {
     try {
@@ -77,7 +76,7 @@ export default function DailySetupGenerator({ venueId, venueName, canManage, lay
       const entries = rows
         .map((row) => ({ capacity: Math.max(1, Number(row.capacity) || 1), count: Math.max(0, Number(row.count) || 0) }))
         .filter((row) => row.count > 0);
-      const result = await Promise.resolve(onGenerate?.({ entries, startingNumber, tableType, tableSize: 34, mode: generationMode }));
+      const result = await Promise.resolve(onGenerate?.({ entries, startingNumber, tableType, tableSize: 34 }));
       setMessage(result?.message || (result?.ok ? `${result.count} tables generated for ${venueName}.` : "Unable to generate today’s tables."));
     } catch (error) {
       console.error("Daily setup generation failed:", error);
@@ -137,23 +136,14 @@ export default function DailySetupGenerator({ venueId, venueName, canManage, lay
         <label><span>Category</span><select value={tableType} onChange={(event) => setTableType(event.target.value)}>{TABLE_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       </div>
 
-      <div className="daily-generator-mode" role="group" aria-label="Generation behavior">
-        <button type="button" className={generationMode === "add-missing" ? "active" : ""} onClick={() => setGenerationMode("add-missing")}>
-          <PlusCircle size={14} /> Add missing tables
-        </button>
-        <button type="button" className={generationMode === "replace" ? "active danger" : ""} onClick={() => setGenerationMode("replace")}>
-          <RefreshCw size={14} /> Replace all tables
-        </button>
-      </div>
-
       <div className="daily-setup-v152-summary">
         <span><strong>{totalTables}</strong> tables</span>
         <span><strong>{totalSeats}</strong> seats</span>
-        <small>{generationMode === "add-missing" ? "Safe mode: keeps tables already positioned and adds only the missing quantities." : "Replace mode: deletes today’s tables and rebuilds them. Areas and landmarks remain safe."}</small>
+        <small>Existing daily tables will be replaced. Areas, landmarks, and the venue map stay safe.</small>
       </div>
 
       <button type="button" className="daily-setup-v152-generate" disabled={!canManage || layoutLocked || working || totalTables === 0} onClick={generate}>
-        <Sparkles size={15} /> {working ? "Generating…" : generationMode === "add-missing" ? `Update Today’s Setup` : `Replace with ${totalTables || "Today’s"} Tables`}
+        <Sparkles size={15} /> {working ? "Generating…" : `Generate ${totalTables || "Today’s"} Tables`}
       </button>
       <button type="button" className="daily-setup-v152-clear" onClick={clearCounts}><RotateCcw size={13} /> Clear counts</button>
 
