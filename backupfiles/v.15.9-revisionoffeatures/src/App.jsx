@@ -693,7 +693,6 @@ function TableChip({
   onToggleStatus,
   onRequestCanvasExpand,
   onBeginMove,
-  onEndMove,
 }) {
   const isSplitParent = table.childIds && table.childIds.length > 0;
   const dragRef = useRef({ dragging: false, moved: false, startX: 0, startY: 0, origX: 0, origY: 0 });
@@ -766,7 +765,6 @@ function TableChip({
     const d = dragRef.current;
     if (canDrag) e.currentTarget.releasePointerCapture(e.pointerId);
     if (!d.moved) onSelect(table.id, e);
-    else onEndMove?.(table.id);
     dragRef.current.dragging = false;
   };
   const onContextMenu = (e) => {
@@ -789,7 +787,7 @@ function TableChip({
       className={`select-none ${canDrag ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"}`}
     >
       <div
-        className={`table-chip relative flex flex-col items-center justify-center font-semibold shadow-md transition-transform hover:scale-105 ${displaySettings.accessibilityMode ? "accessibility-table" : ""} ${displaySettings.highlightTableNumbers ? "highlight-table-numbers" : ""} ${displaySettings.highlightEmptyTables && table.status !== "occupied" ? "highlight-empty-table" : ""} ${
+        className={`table-chip relative flex flex-col items-center justify-center font-semibold shadow-md transition-transform hover:scale-105 ${displaySettings.accessibilityMode ? "accessibility-table" : ""} ${displaySettings.highlightEmptyTables && table.status !== "occupied" ? "highlight-empty-table" : ""} ${
           isSelected ? "ring-4 ring-offset-1 ring-purple-500" : ""
         } ${isSplitChild ? "ring-2 ring-offset-1 ring-orange-500" : ""} ${
           typeDefinition.shape === "circle" ? "rounded-full" : "rounded-lg"
@@ -810,10 +808,9 @@ function TableChip({
           />
         )}
         {isSplitChild && (
-          <span className="absolute -top-2 left-1/2 -translate-x-1/2 text-[8px] bg-orange-600 text-white px-1 rounded">split</span>
-        )}
-        {table.isTableGroup && (
-          <span className="absolute -top-2 left-1/2 -translate-x-1/2 text-[8px] bg-indigo-700 text-white px-1 rounded">group</span>
+          <span className="absolute -top-2 left-1/2 -translate-x-1/2 text-[8px] bg-orange-600 text-white px-1 rounded">
+            split
+          </span>
         )}
         {displaySettings.showTableNumbers !== false && table.showTableNumber !== false && <span className="table-number-value" style={{ fontSize: effectiveTableNumberSize }}>{table.number}</span>}
         {displaySettings.showPax !== false && <span className="table-capacity-value" style={{ fontSize: effectiveCapacitySize }}>{table.capacity}</span>}
@@ -888,7 +885,7 @@ function SplitEditor({ table, onCancel, onConfirm }) {
 
 // ---------- table detail / editor panel ----------
 
-function TableEditor({ table, siblings, parentTable, servers, groups, permissions, displaySettings, onClose, onUpdate, onSplit, onMerge, onSplitGroup, onDelete }) {
+function TableEditor({ table, siblings, parentTable, servers, groups, permissions, displaySettings, onClose, onUpdate, onSplit, onMerge, onDelete }) {
   const [splitting, setSplitting] = useState(false);
   const anySiblingOccupied = (siblings || []).some((s) => s.status === "occupied") || table.status === "occupied";
   const assignedServer = servers.find((s) => s.id === table.serverId);
@@ -1181,14 +1178,7 @@ function TableEditor({ table, siblings, parentTable, servers, groups, permission
       </div>
 
       <div className="pt-2 border-t border-slate-200 space-y-2">
-        {table.isTableGroup ? (
-          <button
-            onClick={() => onSplitGroup(table.id)}
-            className="w-full text-xs py-2 rounded-lg bg-indigo-700 text-white font-medium flex items-center justify-center gap-1.5"
-          >
-            <Scissors size={14} /> Split table group ({table.combinedTables?.length || 0} tables)
-          </button>
-        ) : table.parentId ? (
+        {table.parentId ? (
           <button
             disabled={anySiblingOccupied}
             onClick={() => onMerge(table.parentId)}
@@ -1251,7 +1241,6 @@ function FloorPlanCanvas({
   onRequestCanvasExpand,
   blueprint,
   onBeginTableMove,
-  onEndTableMove,
   onBeginAreaInteraction,
   onBoxSelect,
   layoutLocked = false,
@@ -1398,7 +1387,6 @@ function FloorPlanCanvas({
                   onToggleStatus={onToggleStatus}
                   onRequestCanvasExpand={onRequestCanvasExpand}
                   onBeginMove={onBeginTableMove}
-                  onEndMove={onEndTableMove}
                 />
               ))}
             {selectionBox && (
@@ -1718,7 +1706,6 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
             showServerNames: saved?.showServerNames !== false,
             showCelebrations: saved?.showCelebrations !== false,
             highlightEmptyTables: Boolean(saved?.highlightEmptyTables),
-            highlightTableNumbers: Boolean(saved?.highlightTableNumbers),
             sidebarCollapsed: Boolean(saved?.sidebarCollapsed),
             inspectorCollapsed: Boolean(saved?.inspectorCollapsed),
             operationsView: Boolean(saved?.operationsView),
@@ -2350,114 +2337,6 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
       return table.id === id ? { ...table, pos: { x, y } } : table;
     }));
   };
-
-  const combineTables = useCallback((tableIds) => {
-    if (!permissions.canManageTables) return;
-    const ids = Array.from(new Set(tableIds));
-    const selectedTables = tables.filter((table) => ids.includes(table.id));
-    if (selectedTables.length < 2) return;
-
-    const materialize = (table) => table.isTableGroup && Array.isArray(table.combinedTables)
-      ? table.combinedTables.map((child) => ({
-          ...structuredClone(child),
-          groupOffset: undefined,
-          pos: {
-            x: table.pos.x + (Number(child.groupOffset?.x) || 0),
-            y: table.pos.y + (Number(child.groupOffset?.y) || 0),
-          },
-        }))
-      : [structuredClone(table)];
-
-    const originals = selectedTables.flatMap(materialize);
-    const minX = Math.min(...originals.map((table) => table.pos.x));
-    const minY = Math.min(...originals.map((table) => table.pos.y));
-    const numbers = originals.map((table) => String(table.number));
-    const totalCapacity = originals.reduce((sum, table) => sum + (Number(table.capacity) || 0), 0);
-    const first = originals[0];
-    const combined = {
-      ...first,
-      id: uid("tg"),
-      number: numbers.join("+").slice(0, 18),
-      capacity: totalCapacity,
-      status: originals.some((table) => table.status === "occupied") ? "occupied" : "available",
-      statusUpdatedAt: new Date().toISOString(),
-      guestName: "",
-      guestInitials: "",
-      partySize: null,
-      parentId: null,
-      childIds: null,
-      isTableGroup: true,
-      combinedTables: originals.map((table) => ({
-        ...table,
-        groupOffset: { x: table.pos.x - minX, y: table.pos.y - minY },
-      })),
-      displaySize: { width: Math.max(56, getTableDisplaySize(first).width), height: Math.max(48, getTableDisplaySize(first).height) },
-      pos: { x: minX, y: minY },
-    };
-    pushHistory();
-    setTables((previous) => [...previous.filter((table) => !ids.includes(table.id)), combined]);
-    setSelectedTableId(combined.id);
-    setSelectedTableIds([combined.id]);
-  }, [permissions.canManageTables, pushHistory, setTables, tables]);
-
-  const splitTableGroup = useCallback((groupId) => {
-    if (!permissions.canManageTables) return;
-    const group = tables.find((table) => table.id === groupId && table.isTableGroup);
-    if (!group || !Array.isArray(group.combinedTables)) return;
-    if (!window.confirm(`Split this group back into ${group.combinedTables.length} tables?`)) return;
-    const restored = group.combinedTables.map((child) => ({
-      ...structuredClone(child),
-      groupOffset: undefined,
-      pos: {
-        x: group.pos.x + (Number(child.groupOffset?.x) || 0),
-        y: group.pos.y + (Number(child.groupOffset?.y) || 0),
-      },
-    }));
-    pushHistory();
-    setTables((previous) => [...previous.filter((table) => table.id !== groupId), ...restored]);
-    setSelectedTableId(restored[0]?.id || null);
-    setSelectedTableIds(restored.map((table) => table.id));
-  }, [permissions.canManageTables, pushHistory, setTables, tables]);
-
-  const checkTableOverlapAfterMove = useCallback((movedId) => {
-    if (!permissions.canManageTables || selectedTableIds.length > 1) return;
-    const moved = tables.find((table) => table.id === movedId);
-    if (!moved || moved.parentId || (moved.childIds && moved.childIds.length)) return;
-    const movedSize = getTableDisplaySize(moved);
-    const movedBox = { left: moved.pos.x, top: moved.pos.y, right: moved.pos.x + movedSize.width, bottom: moved.pos.y + movedSize.height };
-    const matches = tables.filter((table) => table.id !== movedId && !table.parentId && !(table.childIds && table.childIds.length)).map((table) => {
-      const size = getTableDisplaySize(table);
-      const box = { left: table.pos.x, top: table.pos.y, right: table.pos.x + size.width, bottom: table.pos.y + size.height };
-      const width = Math.max(0, Math.min(movedBox.right, box.right) - Math.max(movedBox.left, box.left));
-      const height = Math.max(0, Math.min(movedBox.bottom, box.bottom) - Math.max(movedBox.top, box.top));
-      const overlap = width * height;
-      const threshold = Math.min(movedSize.width * movedSize.height, size.width * size.height) * 0.45;
-      return { table, overlap, qualifies: overlap >= threshold };
-    }).filter((item) => item.qualifies).sort((a, b) => b.overlap - a.overlap);
-    const target = matches[0]?.table;
-    if (!target) return;
-    if (window.confirm(`Tables ${moved.number} and ${target.number} overlap. Create a temporary Table Group?`)) {
-      combineTables([moved.id, target.id]);
-    }
-  }, [combineTables, permissions.canManageTables, selectedTableIds.length, tables]);
-
-  const setAllTableStatus = useCallback((status) => {
-    if (!permissions.canManageTables) return;
-    const count = tables.filter((table) => !(table.childIds && table.childIds.length)).length;
-    if (!window.confirm(`Set all ${count} tables in ${layoutConfig.name} to ${status}? Guest details will be kept.`)) return;
-    pushHistory();
-    const changedAt = new Date().toISOString();
-    setTables((previous) => previous.map((table) => ({ ...table, status, statusUpdatedAt: changedAt })));
-  }, [layoutConfig.name, permissions.canManageTables, pushHistory, setTables, tables]);
-
-  const clearAllGuestDetails = useCallback(() => {
-    if (!permissions.canManageTables) return;
-    if (!window.confirm(`Clear guest names, initials, party sizes, celebrations, and group assignments for all tables in ${layoutConfig.name}? Table status will not change.`)) return;
-    pushHistory();
-    setTables((previous) => previous.map((table) => ({
-      ...table, guestName: "", guestInitials: "", partySize: null, groupId: null, showGuestName: false, showGuestInitials: false, celebration: null, celebrations: null,
-    })));
-  }, [layoutConfig.name, permissions.canManageTables, pushHistory, setTables]);
 
   const deleteTable = (id) => {
     if (!permissions.canDeleteTables) return;
@@ -3214,15 +3093,6 @@ const toggleAreaEditMode = useCallback(() => {
                     <div className="bulk-number-actions"><span>Table numbers</span><button type="button" onClick={() => applyBulkTablePatch({ showTableNumber: true })}><Eye size={13} /> Show</button><button type="button" onClick={() => applyBulkTablePatch({ showTableNumber: false })}><EyeOff size={13} /> Hide</button></div>
                   </div>
                 )}
-                <div className="venue-bulk-status-card">
-                  <strong>Whole venue status</strong>
-                  <small>Quick reset for static buffet layouts. Guest details are kept.</small>
-                  <div className="bulk-table-button-grid">
-                    <button type="button" onClick={() => setAllTableStatus("available")}><Check size={14} /> All available</button>
-                    <button type="button" onClick={() => setAllTableStatus("occupied")}><Check size={14} /> All occupied</button>
-                  </div>
-                  <button type="button" className="workspace-secondary-action" onClick={clearAllGuestDetails}><X size={14} /> Clear guest details</button>
-                </div>
                 <button type="button" className="designer-danger-action" onClick={clearAllTables}><Trash2 size={14} /> Delete all venue tables</button>
                 <small>Drag a box to highlight. ⌘/Ctrl+C copies, ⌘/Ctrl+V pastes, arrows move, Delete removes, and Esc clears selection.</small>
               </div>
@@ -3355,7 +3225,7 @@ const toggleAreaEditMode = useCallback(() => {
               <fieldset><legend>Capacity Size</legend>{["small","medium","large"].map(v => <label key={v}><input type="radio" name="capacitySize" checked={displaySettings.capacitySize===v} onChange={() => updateViewSettings({capacitySize:v})}/><span>{v[0].toUpperCase()+v.slice(1)}</span></label>)}</fieldset>
               <fieldset><legend>Table Text Color</legend>{["white","black"].map(v => <label key={v}><input type="radio" name="tableTextColor" checked={displaySettings.tableTextColor===v} onChange={() => updateViewSettings({tableTextColor:v})}/><span>{v[0].toUpperCase()+v.slice(1)}</span></label>)}</fieldset>
               <div className="display-toggle-list">
-                {[['showTableNumbers','Table Numbers'],['showPax','Pax'],['showAreaLabels','Area Labels'],['showServerNames','Server Names'],['showCelebrations','Celebrations'],['highlightTableNumbers','Highlight Table Numbers'],['highlightEmptyTables','Highlight Empty Tables']].map(([key,label]) => <label key={key}><input type="checkbox" checked={Boolean(displaySettings[key])} onChange={(e)=>updateViewSettings({[key]:e.target.checked})}/><span>{label}</span></label>)}
+                {[['showTableNumbers','Table Numbers'],['showPax','Pax'],['showAreaLabels','Area Labels'],['showServerNames','Server Names'],['showCelebrations','Celebrations'],['highlightEmptyTables','Highlight Empty Tables']].map(([key,label]) => <label key={key}><input type="checkbox" checked={Boolean(displaySettings[key])} onChange={(e)=>updateViewSettings({[key]:e.target.checked})}/><span>{label}</span></label>)}
               </div>
               <div className="workspace-help-card"><strong>Workspace memory</strong><span>Full Floor, hidden panels, zoom, and pan position are saved automatically per venue.</span></div>
             </div>
@@ -3412,7 +3282,6 @@ const toggleAreaEditMode = useCallback(() => {
             onRequestCanvasExpand={requestCanvasExpansion}
             blueprint={blueprintsByR[activeRid]}
             onBeginTableMove={pushHistory}
-            onEndTableMove={checkTableOverlapAfterMove}
             onBeginAreaInteraction={pushHistory}
             onBoxSelect={selectTablesInBox}
             layoutLocked={layoutLocked}
@@ -3444,7 +3313,6 @@ const toggleAreaEditMode = useCallback(() => {
               onUpdate={updateTable}
               onSplit={splitTable}
               onMerge={mergeTable}
-              onSplitGroup={splitTableGroup}
               onDelete={deleteTable}
             />
           )}
