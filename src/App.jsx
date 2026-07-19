@@ -61,6 +61,9 @@ import {
   PanelRightOpen,
   Minimize2,
   AlertTriangle,
+  Smartphone,
+  MapPinned,
+  Search,
 } from "lucide-react";
 
 /* ============================================================
@@ -1290,6 +1293,102 @@ function TableEditor({ table, siblings, parentTable, servers, groups, permission
   );
 }
 
+// ---------- Gateway greeter live dashboard ----------
+
+function GatewayGreeterDashboard({ venueName, areas, tables, onLocateArea, onExit }) {
+  const [partySize, setPartySize] = useState(4);
+  const [query, setQuery] = useState("");
+  const visibleTables = useMemo(
+    () => tables.filter((table) => !(table.childIds && table.childIds.length)),
+    [tables]
+  );
+
+  const tableAreaId = useCallback((table) => {
+    const cx = (Number(table.pos?.x) || 0) + 18;
+    const cy = (Number(table.pos?.y) || 0) + 18;
+    const containing = areas.find((area) =>
+      (area.areaKind ?? "seating") === "seating" &&
+      !area.hidden &&
+      cx >= Number(area.x) && cx <= Number(area.x) + Number(area.w) &&
+      cy >= Number(area.y) && cy <= Number(area.y) + Number(area.h)
+    );
+    return containing?.id || "unassigned";
+  }, [areas]);
+
+  const areaRows = useMemo(() => {
+    const seatingAreas = areas.filter((area) => (area.areaKind ?? "seating") === "seating" && !area.hidden);
+    const rows = seatingAreas.map((area) => {
+      const areaTables = visibleTables.filter((table) => tableAreaId(table) === area.id);
+      const available = areaTables.filter((table) => table.status !== "occupied");
+      const occupied = areaTables.filter((table) => table.status === "occupied");
+      const capacities = [2, 4, 6, 8, 10, 12].map((size) => ({
+        size,
+        exact: available.filter((table) => Number(table.capacity) === size).length,
+        fits: available.filter((table) => Number(table.capacity) >= size).length,
+      }));
+      const best = available
+        .filter((table) => Number(table.capacity) >= partySize)
+        .sort((a, b) => Number(a.capacity) - Number(b.capacity) || String(a.number).localeCompare(String(b.number)))[0];
+      return { area, areaTables, available, occupied, capacities, best };
+    });
+    return rows.filter((row) => !query || row.area.label.toLowerCase().includes(query.toLowerCase()));
+  }, [areas, visibleTables, tableAreaId, partySize, query]);
+
+  const totals = useMemo(() => ({
+    total: visibleTables.length,
+    available: visibleTables.filter((table) => table.status !== "occupied").length,
+    occupied: visibleTables.filter((table) => table.status === "occupied").length,
+  }), [visibleTables]);
+
+  return (
+    <div className="greeter-dashboard">
+      <header className="greeter-dashboard-header">
+        <div>
+          <span className="greeter-eyebrow">LIVE SEATING DISPATCH</span>
+          <h2>{venueName} Greeter Dashboard</h2>
+          <p>Updates automatically whenever a lead changes a table on the Gateway canvas.</p>
+        </div>
+        <button type="button" className="greeter-map-button" onClick={onExit}><MapPinned size={18}/> Open floor map</button>
+      </header>
+
+      <section className="greeter-summary-row">
+        <article><strong>{totals.available}</strong><span>Available</span></article>
+        <article><strong>{totals.occupied}</strong><span>Occupied</span></article>
+        <article><strong>{totals.total}</strong><span>Total tables</span></article>
+      </section>
+
+      <section className="greeter-find-panel">
+        <div><strong>Find seating for</strong><span>Select the arriving party size.</span></div>
+        <div className="greeter-party-buttons">
+          {[2,4,6,8,10,12].map((size) => <button key={size} type="button" className={partySize===size?'active':''} onClick={()=>setPartySize(size)}>{size}</button>)}
+          <label>Custom<input type="number" min="1" max="100" value={partySize} onChange={(e)=>setPartySize(Math.max(1, Number(e.target.value)||1))}/></label>
+        </div>
+        <label className="greeter-search"><Search size={17}/><input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search area…" /></label>
+      </section>
+
+      <section className="greeter-area-grid">
+        {areaRows.map(({ area, areaTables, available, occupied, capacities, best }) => (
+          <article className="greeter-area-card" key={area.id}>
+            <div className="greeter-area-title">
+              <div><h3>{area.label}</h3><span>{areaTables.length} tables</span></div>
+              <strong className={available.length ? 'ready' : 'full'}>{available.length ? `${available.length} ready` : 'Full'}</strong>
+            </div>
+            <div className="greeter-capacity-list">
+              {capacities.map(({size, exact, fits}) => <div key={size}><b>{size}</b><span>{exact} exact</span><small>{fits} can fit</small></div>)}
+            </div>
+            <div className="greeter-area-footer">
+              <div>{best ? <><span>Best for {partySize}</span><strong>Table {best.number} · {best.capacity} seats</strong></> : <><span>Best for {partySize}</span><strong>No table available</strong></>}</div>
+              <button type="button" onClick={()=>onLocateArea(area)}>View area</button>
+            </div>
+            <div className="greeter-card-status"><span>{available.length} available</span><span>{occupied.length} occupied</span></div>
+          </article>
+        ))}
+        {!areaRows.length && <div className="greeter-empty">No seating areas match this search. Add or rename Gateway areas on the canvas and they will appear here automatically.</div>}
+      </section>
+    </div>
+  );
+}
+
 // ---------- floor plan canvas ----------
 
 
@@ -1335,8 +1434,40 @@ function FloorPlanCanvas({
 
   const scrollRef = useRef(null);
   const panRef = useRef(null);
+  const pinchRef = useRef(null);
   const lassoRef = useRef(null);
   const [selectionBox, setSelectionBox] = useState(null);
+
+  const touchDistance = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+  const touchMidpoint = (touches) => ({ x: (touches[0].clientX + touches[1].clientX) / 2, y: (touches[0].clientY + touches[1].clientY) / 2 });
+  const onTouchStart = (event) => {
+    if (event.touches.length !== 2) return;
+    const node = scrollRef.current;
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    const midpoint = touchMidpoint(event.touches);
+    pinchRef.current = {
+      distance: touchDistance(event.touches),
+      zoom,
+      contentX: (node.scrollLeft + midpoint.x - rect.left) / zoom,
+      contentY: (node.scrollTop + midpoint.y - rect.top) / zoom,
+    };
+  };
+  const onTouchMove = (event) => {
+    if (event.touches.length !== 2 || !pinchRef.current) return;
+    event.preventDefault();
+    const node = scrollRef.current;
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    const midpoint = touchMidpoint(event.touches);
+    const nextZoom = clampZoom(pinchRef.current.zoom * (touchDistance(event.touches) / pinchRef.current.distance));
+    onZoomChange(nextZoom);
+    requestAnimationFrame(() => {
+      node.scrollLeft = pinchRef.current.contentX * nextZoom - (midpoint.x - rect.left);
+      node.scrollTop = pinchRef.current.contentY * nextZoom - (midpoint.y - rect.top);
+    });
+  };
+  const onTouchEnd = (event) => { if (event.touches.length < 2) pinchRef.current = null; };
 
   useEffect(() => {
     const node = scrollRef.current;
@@ -1408,7 +1539,7 @@ function FloorPlanCanvas({
       {layoutLocked && <div className="floor-mode-badge">🔒 Layout Locked</div>}
       {!layoutLocked && areaEditMode && <div className="floor-mode-badge">Area Edit Mode</div>}
       <div className="floor-workspace bg-white rounded-xl border border-slate-200">
-        <div ref={scrollRef} className="floor-scroll-container" style={{ width: "100%", height: "100%", overflow: "auto" }} onWheel={onWheel} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan}>
+        <div ref={scrollRef} className="floor-scroll-container" style={{ width: "100%", height: "100%", overflow: "auto" }} onWheel={onWheel} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onTouchCancel={onTouchEnd}>
           <div className="floor-canvas-scale-layer" style={{ position: "relative", width: canvasWidth * zoom, height: canvasHeight * zoom }}>
           <div
             className={`floor-canvas ${areaEditMode ? "floor-area-edit-mode" : ""}`}
@@ -1832,6 +1963,8 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => Boolean(viewSettingsByRestaurant[activeRid]?.sidebarCollapsed));
   const [inspectorCollapsed, setInspectorCollapsed] = useState(() => Boolean(viewSettingsByRestaurant[activeRid]?.inspectorCollapsed));
   const [operationsView, setOperationsView] = useState(() => Boolean(viewSettingsByRestaurant[activeRid]?.operationsView));
+  const [mobileFocusMode, setMobileFocusMode] = useState(false);
+  const [greeterView, setGreeterView] = useState(false);
   useEffect(() => {
     const saved = viewSettingsByRestaurant[activeRid] || {};
     setSidebarCollapsed(Boolean(saved.sidebarCollapsed));
@@ -3190,8 +3323,8 @@ const toggleAreaEditMode = useCallback(() => {
   ];
 
   return (
-    <div className="workspace-app">
-      <AppHeader
+    <div className={`workspace-app ${mobileFocusMode ? "mobile-focus-mode" : ""} ${greeterView ? "greeter-view-active" : ""}`}>
+      {!mobileFocusMode && <AppHeader
         title={`${RESTAURANT_LAYOUT_CONFIG[activeRid].name} Seating Layout`}
         instructions={instructions}
         saveLabel={saveLabel}
@@ -3214,10 +3347,10 @@ const toggleAreaEditMode = useCallback(() => {
         onOpenAccount={() => setAccountModalOpen(true)}
         testingMode
         onRetryCloud={() => retryCloudRef.current?.()}
-      />
+      />}
 
-      <main className={`workspace-main ${sidebarCollapsed || operationsView ? "sidebar-collapsed" : ""} ${inspectorCollapsed || operationsView ? "inspector-collapsed" : ""} ${operationsView ? "operations-view" : ""}`}>
-        {!operationsView && !sidebarCollapsed && <ToolSidebar
+      <main className={`workspace-main ${sidebarCollapsed || operationsView || mobileFocusMode || greeterView ? "sidebar-collapsed" : ""} ${inspectorCollapsed || operationsView || mobileFocusMode || greeterView ? "inspector-collapsed" : ""} ${operationsView || mobileFocusMode ? "operations-view" : ""}`}>
+        {!operationsView && !mobileFocusMode && !greeterView && !sidebarCollapsed && <ToolSidebar
           tabs={toolTabs}
           activeTool={activeTool}
           onToolChange={setActiveTool}
@@ -3461,10 +3594,26 @@ const toggleAreaEditMode = useCallback(() => {
 
         <section className="workspace-center" aria-label="Seating floor workspace">
           <div className="operations-view-toolbar">
-            <button type="button" onClick={() => setSidebarCollapsed((value) => !value)} title="Show or hide tools"><Menu size={16} /> <span>Tools</span></button>
-            <button type="button" onClick={() => setInspectorCollapsed((value) => !value)} title="Show or hide inspector">{inspectorCollapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />} <span>Inspector</span></button>
-            <button type="button" className={operationsView ? "active" : ""} onClick={() => setOperationsView((value) => !value)} title="Large floor operations view">{operationsView ? <Minimize2 size={16} /> : <Maximize2 size={16} />} <span>{operationsView ? "Exit focus" : "Full floor"}</span></button>
+            {!mobileFocusMode && !greeterView && <button type="button" onClick={() => setSidebarCollapsed((value) => !value)} title="Show or hide tools"><Menu size={16} /> <span>Tools</span></button>}
+            {!mobileFocusMode && !greeterView && <button type="button" onClick={() => setInspectorCollapsed((value) => !value)} title="Show or hide inspector">{inspectorCollapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />} <span>Inspector</span></button>}
+            {!greeterView && <button type="button" className={mobileFocusMode ? "active" : ""} onClick={() => setMobileFocusMode((value) => !value)} title="Phone and tablet map mode"><Smartphone size={16}/><span>{mobileFocusMode ? "Show controls" : "Mobile map"}</span></button>}
+            {activeRid === "gateway" && <button type="button" className={greeterView ? "active" : ""} onClick={() => setGreeterView((value) => !value)} title="Gateway greeter dashboard"><LayoutDashboard size={16}/><span>{greeterView ? "Floor map" : "Greeter"}</span></button>}
+            {!mobileFocusMode && !greeterView && <button type="button" className={operationsView ? "active" : ""} onClick={() => setOperationsView((value) => !value)} title="Large floor operations view">{operationsView ? <Minimize2 size={16} /> : <Maximize2 size={16} />} <span>{operationsView ? "Exit focus" : "Full floor"}</span></button>}
           </div>
+          {greeterView ? (
+            <GatewayGreeterDashboard
+              venueName={layoutConfig.name}
+              areas={areas}
+              tables={tables}
+              onExit={() => setGreeterView(false)}
+              onLocateArea={(area) => {
+                setGreeterView(false);
+                setMobileFocusMode(true);
+                setZoom(clampWorkspaceZoom(Math.max(layoutConfig.minZoom, 0.75)));
+                updateViewSettings({ pan: { x: Math.max(0, area.x * 0.75 - 100), y: Math.max(0, area.y * 0.75 - 100) } });
+              }}
+            />
+          ) : <>
           <div className="occupancy-widget" aria-label={`${layoutConfig.name} occupancy summary`}>
             <div className="occupancy-widget-title"><span>{layoutConfig.name}</span><strong>{seatingMetrics.totalTables} tables</strong></div>
             <div className="occupancy-widget-metrics">
@@ -3508,9 +3657,11 @@ const toggleAreaEditMode = useCallback(() => {
             panPosition={displaySettings.pan}
             onPanChange={(pan) => updateViewSettings({ pan })}
           />
+          </>}
+          {mobileFocusMode && <div className="mobile-map-hint">Pinch with two fingers to zoom · Drag to move around</div>}
         </section>
 
-        {!operationsView && <InspectorPanel
+        {!operationsView && !mobileFocusMode && !greeterView && <InspectorPanel
           collapsed={inspectorCollapsed}
           onToggle={() => setInspectorCollapsed((value) => !value)}
           title={areaEditMode ? "Area selection" : selectedTable ? `Table ${selectedTable.number}` : "Inspector"}
@@ -3550,7 +3701,7 @@ const toggleAreaEditMode = useCallback(() => {
 
       <ActionDialog dialog={actionDialog} onResolve={resolveDialog} />
 
-      <WorkspaceFooter
+      {!mobileFocusMode && !greeterView && <WorkspaceFooter
         legend={<SeatingLegend />}
         zoom={zoom}
         onZoomOut={zoomOut}
@@ -3558,7 +3709,7 @@ const toggleAreaEditMode = useCallback(() => {
         onResetZoom={resetZoom}
         onFit={fitZoom}
         areaEditMode={areaEditMode}
-      />
+      />}
     </div>
   );
 }
