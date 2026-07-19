@@ -119,7 +119,7 @@ export default function VenueDesignerPanel({
     event.target.value = "";
     if (!file) return;
     try {
-      const result = onImportLayout?.(JSON.parse(await file.text()));
+      const result = await onImportLayout?.(JSON.parse(await file.text()));
       setMessage(result?.message || "Layout imported.");
     } catch (error) {
       console.error(error);

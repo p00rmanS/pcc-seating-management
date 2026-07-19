@@ -60,6 +60,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Minimize2,
+  AlertTriangle,
 } from "lucide-react";
 
 /* ============================================================
@@ -79,6 +80,46 @@ const SWATCHES = [
   "#3b82f6", "#8b5cf6", "#ec4899", "#f97316",
   "#22c55e", "#ef4444", "#eab308", "#14b8a6",
 ];
+
+const GUEST_HIGHLIGHT_OPTIONS = [
+  { value: "", label: "None", color: "#64748b", symbol: "" },
+  { value: "birthday", label: "Birthday", color: "#ec4899", symbol: "🎂" },
+  { value: "anniversary", label: "Anniversary", color: "#a855f7", symbol: "♥" },
+  { value: "honeymoon", label: "Honeymoon", color: "#f43f5e", symbol: "♥" },
+  { value: "retirement", label: "Retirement", color: "#f59e0b", symbol: "★" },
+  { value: "congratulations", label: "Congratulations", color: "#3b82f6", symbol: "✓" },
+  { value: "vip", label: "VIP", color: "#d4a017", symbol: "★" },
+  { value: "allergy", label: "Allergy", color: "#ef4444", symbol: "!" },
+  { value: "custom", label: "Custom", color: "#14b8a6", symbol: "•" },
+];
+
+function getGuestHighlight(value) {
+  return GUEST_HIGHLIGHT_OPTIONS.find((option) => option.value === value) || GUEST_HIGHLIGHT_OPTIONS[0];
+}
+
+function ActionDialog({ dialog, onResolve }) {
+  if (!dialog) return null;
+  const tone = dialog.tone || "primary";
+  return (
+    <div className="pcc-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onResolve(false); }}>
+      <section className="pcc-dialog" role="dialog" aria-modal="true" aria-labelledby="pcc-dialog-title">
+        <div className={`pcc-dialog-icon ${tone}`}>
+          {dialog.icon || (tone === "danger" || tone === "warning" ? <AlertTriangle size={23} /> : <Check size={23} />)}
+        </div>
+        <div className="pcc-dialog-copy">
+          <h2 id="pcc-dialog-title">{dialog.title}</h2>
+          {dialog.message && <p>{dialog.message}</p>}
+        </div>
+        <div className="pcc-dialog-actions">
+          {dialog.kind === "confirm" && <button type="button" className="pcc-dialog-cancel" onClick={() => onResolve(false)}>{dialog.cancelLabel || "Cancel"}</button>}
+          <button type="button" className={`pcc-dialog-confirm ${tone === "danger" ? "danger" : ""}`} onClick={() => onResolve(true)}>
+            {dialog.confirmLabel || (dialog.kind === "confirm" ? "Confirm" : "Done")}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
 
 const TABLE_TYPE_OPTIONS = [
   { value: "regular", label: "Regular", available: "#22c55e", occupied: "#475569", shape: "rounded" },
@@ -733,6 +774,8 @@ function TableChip({
       : table.textColorMode === "black"
         ? "#111827"
         : displaySettings.tableTextColor === "black" ? "#111827" : "#ffffff";
+  const guestHighlight = getGuestHighlight(table.guestHighlight);
+  const hasGuestHighlight = Boolean(table.guestHighlight);
 
   const onPointerDown = (e) => {
     e.stopPropagation();
@@ -791,7 +834,7 @@ function TableChip({
       <div
         className={`table-chip relative flex flex-col items-center justify-center font-semibold shadow-md transition-transform hover:scale-105 ${displaySettings.accessibilityMode ? "accessibility-table" : ""} ${displaySettings.highlightTableNumbers ? "highlight-table-numbers" : ""} ${displaySettings.highlightEmptyTables && table.status !== "occupied" ? "highlight-empty-table" : ""} ${
           isSelected ? "ring-4 ring-offset-1 ring-purple-500" : ""
-        } ${isSplitChild ? "ring-2 ring-offset-1 ring-orange-500" : ""} ${
+        } ${isSplitChild ? "ring-2 ring-offset-1 ring-orange-500" : ""} ${hasGuestHighlight ? "guest-highlight-active" : ""} ${
           typeDefinition.shape === "circle" ? "rounded-full" : "rounded-lg"
         }`}
         style={{
@@ -800,9 +843,15 @@ function TableChip({
           background: fill,
           border: `${displaySettings.accessibilityMode ? 3 : 2}px solid ${borderColor}`,
           color: effectiveTextColor,
+          boxShadow: hasGuestHighlight ? `0 0 0 4px ${guestHighlight.color}55, 0 8px 20px ${guestHighlight.color}44` : undefined,
         }}
         title={`Table ${table.number} · ${table.capacity} pax`}
       >
+        {hasGuestHighlight && (
+          <span className="guest-highlight-badge" style={{ background: guestHighlight.color }} title={table.guestHighlight === "custom" ? (table.customHighlightLabel || "Custom") : guestHighlight.label}>
+            {guestHighlight.symbol || "•"}
+          </span>
+        )}
         {group && (
           <span
             className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full border-2 border-white"
@@ -956,6 +1005,21 @@ function TableEditor({ table, siblings, parentTable, servers, groups, permission
           className="w-full mt-1 border border-slate-300 rounded px-2 py-1.5 text-sm"
         />
         <span className="text-[10px] text-slate-400">Used for the live seated guest total. If blank, table capacity is used.</span>
+      </div>
+      <div>
+        <label className="text-xs font-medium text-slate-500">Guest highlight</label>
+        <select value={table.guestHighlight || ""} onChange={(e) => onUpdate(table.id, { guestHighlight: e.target.value })} className="w-full mt-1 border border-slate-300 rounded px-2 py-1.5 text-sm">
+          {GUEST_HIGHLIGHT_OPTIONS.map((option) => <option key={option.value || "none"} value={option.value}>{option.label}</option>)}
+        </select>
+        {table.guestHighlight === "custom" && <input value={table.customHighlightLabel || ""} onChange={(e) => onUpdate(table.id, { customHighlightLabel: e.target.value.slice(0, 30) })} placeholder="Custom highlight label" className="w-full mt-2 border border-slate-300 rounded px-2 py-1.5 text-sm" />}
+      </div>
+      <div>
+        <label className="text-xs font-medium text-slate-500">Celebration message</label>
+        <input value={table.celebrationMessage || ""} onChange={(e) => onUpdate(table.id, { celebrationMessage: e.target.value.slice(0, 100) })} placeholder="e.g. Sing after dessert" className="w-full mt-1 border border-slate-300 rounded px-2 py-1.5 text-sm" />
+      </div>
+      <div>
+        <label className="text-xs font-medium text-slate-500">Server notes</label>
+        <textarea value={table.serverNotes || ""} onChange={(e) => onUpdate(table.id, { serverNotes: e.target.value.slice(0, 300) })} placeholder="Operational note for this table" rows={3} className="w-full mt-1 border border-slate-300 rounded px-2 py-1.5 text-sm resize-y" />
       </div>
     </>
   );
@@ -1527,6 +1591,20 @@ function GroupPanel({ groups, tables, onAdd, onRemove, canManage }) {
 function SeatingWorkspace({ authSession }) {
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [accountPasswordOpen, setAccountPasswordOpen] = useState(false);
+  const [actionDialog, setActionDialog] = useState(null);
+  const dialogResolverRef = useRef(null);
+  const openDialog = useCallback((dialog) => new Promise((resolve) => {
+    dialogResolverRef.current = resolve;
+    setActionDialog(dialog);
+  }), []);
+  const resolveDialog = useCallback((value) => {
+    const resolve = dialogResolverRef.current;
+    dialogResolverRef.current = null;
+    setActionDialog(null);
+    resolve?.(value);
+  }, []);
+  const showAlert = useCallback((title, message, options = {}) => openDialog({ kind: "alert", title, message, ...options }), [openDialog]);
+  const showConfirm = useCallback((title, message, options = {}) => openDialog({ kind: "confirm", title, message, ...options }), [openDialog]);
   const [localSnapshot] = useState(() =>
     loadLocalSnapshot(authSession.user.uid, {
       allowLegacyMigration: ["lead", "admin", "developer", "director", "manager", "assistant_manager"].includes(authSession.profile.role),
@@ -2037,9 +2115,9 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     restoreVenueSnapshot(next);
   }, [activeRid, futureByR, captureVenueSnapshot, restoreVenueSnapshot]);
 
-  const restoreSafeSnapshot = useCallback(() => {
-    if (!safeSnapshotRef.current) { window.alert("No safe snapshot is available yet."); return; }
-    if (window.confirm("Restore the most recent safe snapshot for this venue?")) restoreVenueSnapshot(safeSnapshotRef.current);
+  const restoreSafeSnapshot = useCallback(async () => {
+    if (!safeSnapshotRef.current) { await showAlert("No snapshot available", "Make a change first so the app can create a safe restore point."); return; }
+    if (await showConfirm("Restore safe snapshot?", "The active venue will return to the most recent safe snapshot.", { confirmLabel: "Restore" })) restoreVenueSnapshot(safeSnapshotRef.current);
   }, [restoreVenueSnapshot]);
 
   const setTables = useCallback(
@@ -2138,29 +2216,29 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     tableClipboardRef.current = pasted.map((table) => structuredClone(table));
   }, [permissions.canManageTables, pushHistory, setTables, tables]);
 
-  const deleteSelectedTables = useCallback(() => {
+  const deleteSelectedTables = useCallback(async () => {
     if (!permissions.canDeleteTables || selectedTableIds.length === 0) return;
     const selected = new Set(selectedTableIds);
     const splitChildSelected = tables.some((table) => selected.has(table.id) && table.parentId);
     if (splitChildSelected) {
-      window.alert("Merge split tables before deleting their individual parts.");
+      await showAlert("Table cannot be deleted", "Merge the split table before deleting its individual parts.", { tone: "warning" });
       return;
     }
-    if (!window.confirm(`Delete ${selectedTableIds.length} selected table${selectedTableIds.length === 1 ? "" : "s"}?`)) return;
+    if (!await showConfirm("Delete selected tables?", `${selectedTableIds.length} selected table${selectedTableIds.length === 1 ? "" : "s"} will be removed.`, { confirmLabel: "Delete", tone: "danger" })) return;
     pushHistory();
     setTables((previous) => previous.filter((table) => !selected.has(table.id) && !selected.has(table.parentId)));
     clearTableSelection();
   }, [clearTableSelection, permissions.canDeleteTables, pushHistory, selectedTableIds, setTables, tables]);
 
-  const clearAllTables = useCallback(() => {
+  const clearAllTables = useCallback(async () => {
     if (!permissions.canDeleteTables) return;
-    if (!window.confirm(`Delete ALL tables from ${layoutConfig.name}? Areas and landmarks will remain.`)) return;
+    if (!await showConfirm("Delete all tables?", `All tables in ${layoutConfig.name} will be removed. Areas and landmarks will remain.`, { confirmLabel: "Delete all", tone: "danger" })) return;
     pushHistory();
     setTables([]);
     clearTableSelection();
   }, [clearTableSelection, layoutConfig.name, permissions.canDeleteTables, pushHistory, setTables]);
 
-  const saveDailyLayoutSnapshot = useCallback(() => {
+  const saveDailyLayoutSnapshot = useCallback(async () => {
     if (!isLeadOrAdmin) return;
     const snapshot = captureVenueSnapshot();
     safeSnapshotRef.current = snapshot;
@@ -2168,10 +2246,10 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     try {
       localStorage.setItem(`pcc-seating-layout-baseline-v14.3:${activeRid}`, JSON.stringify({ savedAt, venueId: activeRid, snapshot }));
       setLayoutBaselineMetaByR((previous) => ({ ...previous, [activeRid]: savedAt }));
-      window.alert(`${layoutConfig.name} layout saved. This is now the baseline for Reset Today’s Tables.`);
+      await showAlert("Layout saved", `${layoutConfig.name} is now the baseline for Reset Today’s Tables.`);
     } catch (error) {
       console.error("Unable to save layout baseline:", error);
-      window.alert("The layout baseline could not be saved in this browser.");
+      await showAlert("Layout could not be saved", "The browser could not store the layout baseline.", { tone: "danger" });
     }
   }, [activeRid, captureVenueSnapshot, isLeadOrAdmin, layoutConfig.name]);
 
@@ -2183,15 +2261,15 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     setSelectedTableIds([]);
   }, [activeRid, isLeadOrAdmin]);
 
-  const resetTodaysTables = useCallback(() => {
+  const resetTodaysTables = useCallback(async () => {
     if (!isLeadOrAdmin) return;
     let stored;
     try { stored = JSON.parse(localStorage.getItem(`pcc-seating-layout-baseline-v14.3:${activeRid}`) || "null"); } catch { stored = null; }
     if (!stored?.snapshot?.tables) {
-      window.alert("Save Layout first. No approved baseline exists for this venue yet.");
+      await showAlert("No saved baseline", "Save Layout first before resetting today’s tables.", { tone: "warning" });
       return;
     }
-    if (!window.confirm(`Reset today’s ${layoutConfig.name} tables? Guest names, status, party size, server assignments, and groups will be cleared while the saved table positions and venue design are restored.`)) return;
+    if (!await showConfirm("Reset today’s tables?", `Guest details, status, server assignments, and groups in ${layoutConfig.name} will be cleared while the saved venue layout is restored.`, { confirmLabel: "Reset tables", tone: "warning" })) return;
     pushHistory();
     const baseline = stored.snapshot;
     const cleanTables = structuredClone(baseline.tables).map((table) => ({
@@ -2242,7 +2320,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     pushHistory();
     const allowedKeys = permissions.canEditLayout
       ? Object.keys(patch)
-      : Object.keys(patch).filter((key) => ["status", "guestName", "guestInitials", "partySize", "showTableNumber", "showServerInitials", "showGuestName", "showGuestInitials"].includes(key));
+      : Object.keys(patch).filter((key) => ["status", "guestName", "guestInitials", "partySize", "showTableNumber", "showServerInitials", "showGuestName", "showGuestInitials", "guestHighlight", "customHighlightLabel", "celebrationMessage", "serverNotes"].includes(key));
     if (allowedKeys.length === 0) return;
 
     const currentTable = tables.find((table) => table.id === id);
@@ -2400,11 +2478,11 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     setSelectedTableIds([combined.id]);
   }, [permissions.canManageTables, pushHistory, setTables, tables]);
 
-  const splitTableGroup = useCallback((groupId) => {
+  const splitTableGroup = useCallback(async (groupId) => {
     if (!permissions.canManageTables) return;
     const group = tables.find((table) => table.id === groupId && table.isTableGroup);
     if (!group || !Array.isArray(group.combinedTables)) return;
-    if (!window.confirm(`Split this group back into ${group.combinedTables.length} tables?`)) return;
+    if (!await showConfirm("Split table group?", `Restore the ${group.combinedTables.length} original tables in this temporary group.`, { confirmLabel: "Split group" })) return;
     const restored = group.combinedTables.map((child) => ({
       ...structuredClone(child),
       groupOffset: undefined,
@@ -2419,7 +2497,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     setSelectedTableIds(restored.map((table) => table.id));
   }, [permissions.canManageTables, pushHistory, setTables, tables]);
 
-  const checkTableOverlapAfterMove = useCallback((movedId) => {
+  const checkTableOverlapAfterMove = useCallback(async (movedId) => {
     if (!permissions.canManageTables || selectedTableIds.length > 1) return;
     const moved = tables.find((table) => table.id === movedId);
     if (!moved || moved.parentId || (moved.childIds && moved.childIds.length)) return;
@@ -2436,47 +2514,47 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     }).filter((item) => item.qualifies).sort((a, b) => b.overlap - a.overlap);
     const target = matches[0]?.table;
     if (!target) return;
-    if (window.confirm(`Tables ${moved.number} and ${target.number} overlap. Create a temporary Table Group?`)) {
+    if (await showConfirm("Combine tables?", `Table ${moved.number} (${moved.capacity} guests) + Table ${target.number} (${target.capacity} guests) will create a temporary group with ${Number(moved.capacity || 0) + Number(target.capacity || 0)} guests. Original tables can be restored anytime.`, { confirmLabel: "Combine" })) {
       combineTables([moved.id, target.id]);
     }
   }, [combineTables, permissions.canManageTables, selectedTableIds.length, tables]);
 
-  const setAllTableStatus = useCallback((status) => {
+  const setAllTableStatus = useCallback(async (status) => {
     if (!permissions.canManageTables) return;
     const count = tables.filter((table) => !(table.childIds && table.childIds.length)).length;
-    if (!window.confirm(`Set all ${count} tables in ${layoutConfig.name} to ${status}? Guest details will be kept.`)) return;
+    if (!await showConfirm(`Set all tables ${status}?`, `${layoutConfig.name} has ${count} tables. Guest names, highlights, celebrations, and notes will remain unchanged.`, { confirmLabel: status === "available" ? "Set available" : "Set occupied" })) return;
     pushHistory();
     const changedAt = new Date().toISOString();
     setTables((previous) => previous.map((table) => ({ ...table, status, statusUpdatedAt: changedAt })));
   }, [layoutConfig.name, permissions.canManageTables, pushHistory, setTables, tables]);
 
-  const clearAllGuestDetails = useCallback(() => {
+  const clearAllGuestDetails = useCallback(async () => {
     if (!permissions.canManageTables) return;
-    if (!window.confirm(`Clear guest names, initials, party sizes, celebrations, and group assignments for all tables in ${layoutConfig.name}? Table status will not change.`)) return;
+    if (!await showConfirm("Clear guest details?", `Guest names, initials, party sizes, highlights, celebration messages, server notes, and groups will be removed from ${layoutConfig.name}. Table status will not change.`, { confirmLabel: "Clear details", tone: "danger" })) return;
     pushHistory();
     setTables((previous) => previous.map((table) => ({
-      ...table, guestName: "", guestInitials: "", partySize: null, groupId: null, showGuestName: false, showGuestInitials: false, celebration: null, celebrations: null,
+      ...table, guestName: "", guestInitials: "", partySize: null, groupId: null, showGuestName: false, showGuestInitials: false, celebration: null, celebrations: null, guestHighlight: "", customHighlightLabel: "", celebrationMessage: "", serverNotes: "",
     })));
   }, [layoutConfig.name, permissions.canManageTables, pushHistory, setTables]);
 
-  const deleteTable = (id) => {
+  const deleteTable = async (id) => {
     if (!permissions.canDeleteTables) return;
     const target = tables.find((table) => table.id === id);
     if (!target) return;
-    if (target.parentId) { window.alert("Merge the split table before deleting an individual split part."); return; }
+    if (target.parentId) { await showAlert("Table cannot be deleted", "Merge the split table before deleting an individual split part.", { tone: "warning" }); return; }
     pushHistory();
     setTables((prev) => prev.filter((t) => t.id !== id && t.parentId !== id));
     setSelectedTableId(null);
     setSelectedTableIds((previous) => previous.filter((tableId) => tableId !== id));
   };
 
-  const splitTable = (id, rawParts) => {
+  const splitTable = async (id, rawParts) => {
     if (!permissions.canSplitTables) return;
     const parent = tables.find((t) => t.id === id);
     if (!parent || parent.parentId || (parent.childIds && parent.childIds.length)) return;
     const parts = (Array.isArray(rawParts) ? rawParts : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
     if (parts.length < 2 || parts.reduce((a,b)=>a+b,0) !== Number(parent.capacity)) {
-      window.alert(`Split parts must total ${parent.capacity}.`); return;
+      await showAlert("Invalid split", `Split parts must total ${parent.capacity}.`, { tone: "warning" }); return;
     }
     pushHistory();
     setAreaEditMode(false); setActiveTool("tables");
@@ -2644,20 +2722,20 @@ const duplicateArea = useCallback(
 );
 
 const deleteArea = useCallback(
-  (id) => {
+  async (id) => {
     if (!permissions.canManageZones) return;
     const target = areas.find((area) => area.id === id);
     if (!target || target.protected) return;
-    if (!window.confirm(`Delete the ${target.label} area? Tables will remain on the floor.`)) return;
+    if (!await showConfirm("Delete area?", `${target.label} will be removed, but its tables will remain on the floor.`, { confirmLabel: "Delete area", tone: "danger" })) return;
     setAreas((previous) => previous.filter((area) => area.id !== id));
     setSelectedAreaId(null);
   },
   [areas, permissions.canManageZones, setAreas]
 );
 
-const resetAreas = useCallback(() => {
+const resetAreas = useCallback(async () => {
   if (!permissions.canManageZones) return;
-  if (!window.confirm(`Reset all ${RESTAURANT_LAYOUT_CONFIG[activeRid].name} areas to their defaults?`)) return;
+  if (!await showConfirm("Reset all areas?", `${RESTAURANT_LAYOUT_CONFIG[activeRid].name} areas will return to their defaults.`, { confirmLabel: "Reset areas", tone: "warning" })) return;
   setAreas(cloneDefaultAreas(activeRid));
   setSelectedAreaId(null);
 }, [activeRid, permissions.canManageZones, setAreas]);
@@ -3013,7 +3091,7 @@ const toggleAreaEditMode = useCallback(() => {
     URL.revokeObjectURL(url);
   }, [activeRid, areas, groups, layoutConfig.canvasHeight, layoutConfig.canvasWidth, layoutConfig.name, permissions.canEditLayout, servers, tables, venueOperations]);
 
-  const importVenueLayout = useCallback((payload) => {
+  const importVenueLayout = useCallback(async (payload) => {
     if (!permissions.canEditLayout) return { ok: false, message: "Developer or Lead access is required." };
     if (!payload || payload.format !== "pcc-seating-venue-layout") {
       return { ok: false, message: "This is not a PCC venue-layout export." };
@@ -3021,7 +3099,7 @@ const toggleAreaEditMode = useCallback(() => {
     if (!Array.isArray(payload.areas) || !Array.isArray(payload.tables)) {
       return { ok: false, message: "The layout file is missing areas or tables." };
     }
-    if (!window.confirm(`Replace the current ${layoutConfig.name} layout with this imported backup?`)) {
+    if (!await showConfirm("Import layout backup?", `The current ${layoutConfig.name} layout will be replaced by this backup.`, { confirmLabel: "Import backup", tone: "warning" })) {
       return { ok: false, message: "Import cancelled." };
     }
 
@@ -3061,9 +3139,9 @@ const toggleAreaEditMode = useCallback(() => {
     return { ok: true, message: `${layoutConfig.name} layout imported successfully.` };
   }, [activeRid, layoutConfig.name, permissions.canEditLayout, setAreas, setTables, updateVenueOperations]);
 
-  const resetVenueLayout = useCallback(() => {
+  const resetVenueLayout = useCallback(async () => {
     if (!permissions.canEditLayout) return;
-    if (!window.confirm(`Reset ${layoutConfig.name} tables and areas to the built-in defaults? This cannot be undone unless you exported a backup.`)) return;
+    if (!await showConfirm("Reset venue to defaults?", `${layoutConfig.name} tables and areas will return to built-in defaults. Export a backup first if needed.`, { confirmLabel: "Reset venue", tone: "danger" })) return;
     setAreas(cloneDefaultAreas(activeRid));
     setTables(seedTables(activeRid, seedZones[activeRid] || []));
     setServersByR((previous) => ({ ...previous, [activeRid]: [] }));
@@ -3387,6 +3465,16 @@ const toggleAreaEditMode = useCallback(() => {
             <button type="button" onClick={() => setInspectorCollapsed((value) => !value)} title="Show or hide inspector">{inspectorCollapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />} <span>Inspector</span></button>
             <button type="button" className={operationsView ? "active" : ""} onClick={() => setOperationsView((value) => !value)} title="Large floor operations view">{operationsView ? <Minimize2 size={16} /> : <Maximize2 size={16} />} <span>{operationsView ? "Exit focus" : "Full floor"}</span></button>
           </div>
+          <div className="occupancy-widget" aria-label={`${layoutConfig.name} occupancy summary`}>
+            <div className="occupancy-widget-title"><span>{layoutConfig.name}</span><strong>{seatingMetrics.totalTables} tables</strong></div>
+            <div className="occupancy-widget-metrics">
+              <div><span className="metric-dot available" /><strong>{seatingMetrics.availableTables}</strong><small>Available</small></div>
+              <div><span className="metric-dot occupied" /><strong>{seatingMetrics.occupiedTables}</strong><small>Occupied</small></div>
+              <div><Users size={14} /><strong>{seatingMetrics.seatedGuests}</strong><small>Guests</small></div>
+              <div><Gauge size={14} /><strong>{seatingMetrics.totalTableCapacity}</strong><small>Capacity</small></div>
+            </div>
+            <div className="occupancy-progress"><span style={{ width: `${seatingMetrics.totalTables ? Math.round((seatingMetrics.occupiedTables / seatingMetrics.totalTables) * 100) : 0}%` }} /></div>
+          </div>
           <FloorPlanCanvas
             layoutConfig={layoutConfig}
             areas={areas}
@@ -3459,6 +3547,8 @@ const toggleAreaEditMode = useCallback(() => {
           onShowPasswordForm={setAccountPasswordOpen}
         />
       )}
+
+      <ActionDialog dialog={actionDialog} onResolve={resolveDialog} />
 
       <WorkspaceFooter
         legend={<SeatingLegend />}

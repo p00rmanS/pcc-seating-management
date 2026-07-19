@@ -117,6 +117,10 @@ export async function saveOperationalTableUpdate(venueId, tableId, patch, metada
   if (Object.prototype.hasOwnProperty.call(patch, "showServerInitials")) allowed.showServerInitials = patch.showServerInitials;
   if (Object.prototype.hasOwnProperty.call(patch, "showGuestName")) allowed.showGuestName = patch.showGuestName;
   if (Object.prototype.hasOwnProperty.call(patch, "showGuestInitials")) allowed.showGuestInitials = patch.showGuestInitials;
+  if (Object.prototype.hasOwnProperty.call(patch, "guestHighlight")) allowed.guestHighlight = patch.guestHighlight;
+  if (Object.prototype.hasOwnProperty.call(patch, "customHighlightLabel")) allowed.customHighlightLabel = patch.customHighlightLabel;
+  if (Object.prototype.hasOwnProperty.call(patch, "celebrationMessage")) allowed.celebrationMessage = patch.celebrationMessage;
+  if (Object.prototype.hasOwnProperty.call(patch, "serverNotes")) allowed.serverNotes = patch.serverNotes;
   if (Object.prototype.hasOwnProperty.call(patch, "statusUpdatedAt")) {
     allowed.statusUpdatedAt = patch.statusUpdatedAt;
   }
