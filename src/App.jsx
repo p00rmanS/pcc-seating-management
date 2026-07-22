@@ -64,6 +64,9 @@ import {
   Smartphone,
   MapPinned,
   Search,
+  ChevronRight,
+  Undo2,
+  Redo2,
 } from "lucide-react";
 
 /* ============================================================
@@ -1964,6 +1967,8 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
   const [inspectorCollapsed, setInspectorCollapsed] = useState(() => Boolean(viewSettingsByRestaurant[activeRid]?.inspectorCollapsed));
   const [operationsView, setOperationsView] = useState(() => Boolean(viewSettingsByRestaurant[activeRid]?.operationsView));
   const [mobileFocusMode, setMobileFocusMode] = useState(false);
+  const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
+  const [mobileAddOpen, setMobileAddOpen] = useState(false);
   const [greeterView, setGreeterView] = useState(false);
   useEffect(() => {
     const saved = viewSettingsByRestaurant[activeRid] || {};
@@ -2289,7 +2294,8 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     }
     setSelectedTableId(id);
     setSelectedTableIds([id]);
-  }, [bulkSelectMode]);
+    if (mobileFocusMode) setMobileInspectorOpen(true);
+  }, [bulkSelectMode, mobileFocusMode]);
 
   const clearTableSelection = useCallback(() => {
     setSelectedTableId(null);
@@ -2741,9 +2747,15 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     setTables((prev) => prev.map((t) => (t.groupId === id ? { ...t, groupId: null } : t)));
   };
 
-  const addBlankTable = (capacity = 4, requestedType = quickTableType) => {
+  const addBlankTable = (capacity = 4, requestedType = quickTableType, placeInCurrentView = false) => {
     if (!permissions.canManageTables) return;
     pushHistory();
+    const viewPan = displaySettings.pan || { x: 0, y: 0 };
+    const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 900;
+    const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 600;
+    const viewX = Math.max(0, (Number(viewPan.x) + viewportWidth / 2) / Math.max(zoom, 0.1) - 19);
+    const viewY = Math.max(0, (Number(viewPan.y) + viewportHeight / 2) / Math.max(zoom, 0.1) - 19);
+    const createdId = uid("t");
     setTables((prev) => {
       const nextNumber = getNextTableNumber(prev);
       const offsetIndex = prev.length % 8;
@@ -2751,7 +2763,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
       return [
         ...prev,
         {
-          id: uid("t"),
+          id: createdId,
           number: String(nextNumber),
           capacity: Math.max(1, Number(capacity) || 4),
           zone: "Unassigned",
@@ -2759,19 +2771,14 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
           type: tableType === "super_ambassadors" ? "super" : "regular",
           tableType,
           displaySize: { width: 38, height: 38 },
-          status: "available",
-          statusUpdatedAt: null,
-          serverId: null,
-          guestName: "",
-          partySize: null,
-          color: null,
-          groupId: null,
-          parentId: null,
-          childIds: null,
-          pos: { x: 60 + offsetIndex * 46, y: 90 + Math.floor(prev.length / 8) * 46 },
+          status: "available", statusUpdatedAt: null, serverId: null, guestName: "", partySize: null, color: null, groupId: null, parentId: null, childIds: null,
+          pos: placeInCurrentView ? { x: viewX, y: viewY } : { x: 60 + offsetIndex * 46, y: 90 + Math.floor(prev.length / 8) * 46 },
         },
       ];
     });
+    setSelectedTableId(createdId);
+    setSelectedTableIds([createdId]);
+    setMobileInspectorOpen(true);
   };
 
 
@@ -3614,16 +3621,6 @@ const toggleAreaEditMode = useCallback(() => {
               }}
             />
           ) : <>
-          <div className="occupancy-widget" aria-label={`${layoutConfig.name} occupancy summary`}>
-            <div className="occupancy-widget-title"><span>{layoutConfig.name}</span><strong>{seatingMetrics.totalTables} tables</strong></div>
-            <div className="occupancy-widget-metrics">
-              <div><span className="metric-dot available" /><strong>{seatingMetrics.availableTables}</strong><small>Available</small></div>
-              <div><span className="metric-dot occupied" /><strong>{seatingMetrics.occupiedTables}</strong><small>Occupied</small></div>
-              <div><Users size={14} /><strong>{seatingMetrics.seatedGuests}</strong><small>Guests</small></div>
-              <div><Gauge size={14} /><strong>{seatingMetrics.totalTableCapacity}</strong><small>Capacity</small></div>
-            </div>
-            <div className="occupancy-progress"><span style={{ width: `${seatingMetrics.totalTables ? Math.round((seatingMetrics.occupiedTables / seatingMetrics.totalTables) * 100) : 0}%` }} /></div>
-          </div>
           <FloorPlanCanvas
             layoutConfig={layoutConfig}
             areas={areas}
@@ -3658,7 +3655,27 @@ const toggleAreaEditMode = useCallback(() => {
             onPanChange={(pan) => updateViewSettings({ pan })}
           />
           </>}
-          {mobileFocusMode && <div className="mobile-map-hint">Pinch with two fingers to zoom · Drag to move around</div>}
+          {mobileFocusMode && <>
+            <div className="mobile-map-hint">Pinch with two fingers to zoom · Drag the map with two fingers</div>
+            <nav className="mobile-map-dock" aria-label="Mobile map controls">
+              {permissions.canManageTables && <button type="button" className={mobileAddOpen ? "active" : ""} onClick={() => setMobileAddOpen((value) => !value)}><Plus size={20}/><span>Table</span></button>}
+              <button type="button" disabled={!selectedTable} className={mobileInspectorOpen ? "active" : ""} onClick={() => setMobileInspectorOpen((value) => !value)}><PanelRightOpen size={20}/><span>Edit</span></button>
+              <button type="button" disabled={(historyByR[activeRid] || []).length === 0} onClick={undo}><Undo2 size={20}/><span>Undo</span></button>
+              <button type="button" disabled={(futureByR[activeRid] || []).length === 0} onClick={redo}><Redo2 size={20}/><span>Redo</span></button>
+              <button type="button" onClick={fitZoom}><Maximize2 size={20}/><span>Fit</span></button>
+              <button type="button" onClick={() => { setMobileFocusMode(false); setMobileInspectorOpen(false); setMobileAddOpen(false); }}><X size={20}/><span>Exit</span></button>
+            </nav>
+            {mobileAddOpen && permissions.canManageTables && <section className="mobile-add-popover">
+              <header><div><strong>Add a table</strong><small>Placed in the center of your current view</small></div><button type="button" onClick={() => setMobileAddOpen(false)}><X size={17}/></button></header>
+              <div className="mobile-capacity-grid">{[2,4,6,8,10,12].map((capacity) => <button type="button" key={capacity} onClick={() => { addBlankTable(capacity, quickTableType, true); setMobileAddOpen(false); }}>+{capacity}</button>)}</div>
+              <label>Custom capacity<input type="number" min="1" max="100" placeholder="Enter seats" onKeyDown={(event) => { if (event.key === "Enter") { addBlankTable(Number(event.currentTarget.value) || 4, quickTableType, true); setMobileAddOpen(false); } }} /></label>
+            </section>}
+            {mobileInspectorOpen && selectedTable && !areaEditMode && <aside className="mobile-table-inspector">
+              <div className="mobile-inspector-handle"/>
+              <button className="mobile-inspector-close" type="button" onClick={() => setMobileInspectorOpen(false)}><ChevronRight size={20}/></button>
+              <TableEditor table={selectedTable} siblings={siblings} parentTable={parentTable} servers={servers} groups={groups} permissions={permissions} displaySettings={displaySettings} onClose={() => { setSelectedTableId(null); setMobileInspectorOpen(false); }} onUpdate={updateTable} onSplit={splitTable} onMerge={mergeTable} onSplitGroup={splitTableGroup} onDelete={deleteTable} />
+            </aside>}
+          </>}
         </section>
 
         {!operationsView && !mobileFocusMode && !greeterView && <InspectorPanel
