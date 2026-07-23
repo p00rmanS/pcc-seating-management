@@ -1390,3 +1390,21 @@
 .mobile-table-inspector{position:fixed;right:78px;top:10px;bottom:10px;z-index:124;width:min(390px,calc(100vw - 100px));overflow:auto;padding:8px;border:1px solid rgba(148,163,184,.45);border-radius:20px;background:rgba(248,250,252,.97);box-shadow:0 18px 48px rgba(15,23,42,.24);backdrop-filter:blur(15px);overscroll-behavior:contain;-webkit-overflow-scrolling:touch}.mobile-table-inspector>.border{max-width:none!important;box-shadow:none!important;border:0!important;background:transparent!important;padding:12px!important}.mobile-inspector-close{position:sticky;z-index:5;float:right;top:4px;border:0;border-radius:10px;background:#e2e8f0;color:#334155;padding:6px}.mobile-inspector-handle{display:none}
 .mobile-focus-mode .operations-view-toolbar{right:78px}.mobile-focus-mode .occupancy-widget{display:none!important}
 @media(max-width:700px) and (orientation:portrait){.mobile-map-dock{right:50%;top:auto;bottom:8px;transform:translateX(50%);flex-direction:row;max-width:calc(100vw - 16px)}.mobile-map-dock button{width:48px;min-height:45px}.mobile-add-popover{right:8px;left:8px;top:auto;bottom:70px;transform:none;width:auto}.mobile-table-inspector{left:5px;right:5px;top:28%;bottom:66px;width:auto;border-radius:22px 22px 14px 14px}.mobile-inspector-handle{display:block;width:42px;height:4px;border-radius:99px;background:#cbd5e1;margin:2px auto 6px}.mobile-focus-mode .operations-view-toolbar{right:10px}}
+
+/* v17.1 compact header + optional occupancy card */
+.workspace-header{position:relative;transition:max-height .24s ease,padding .24s ease,opacity .2s ease;overflow:visible}
+.header-collapse-button{position:absolute;right:10px;bottom:-17px;z-index:85;width:34px;height:34px;display:grid;place-items:center;border:1px solid #cbd5e1;border-radius:999px;background:rgba(255,255,255,.96);color:#334155;box-shadow:0 5px 15px rgba(15,23,42,.16);backdrop-filter:blur(10px)}
+.workspace-header.is-collapsed{min-height:34px;max-height:34px;border-bottom:1px solid #e2e8f0;background:#fff}
+.workspace-header.is-collapsed .development-banner,.workspace-header.is-collapsed .workspace-header-main,.workspace-header.is-collapsed .venue-switcher{display:none!important}
+.workspace-header.is-collapsed .header-collapse-button{bottom:-17px}
+.occupancy-widget-title button{margin-left:auto;width:24px;height:24px;display:grid;place-items:center;border:0;border-radius:7px;background:transparent;color:#64748b}
+.occupancy-widget-title button:hover{background:#e2e8f0;color:#172033}
+.header-collapsed .workspace-main{min-height:calc(100dvh - 34px)}
+@media(max-width:900px){
+  .workspace-header:not(.is-collapsed) .workspace-header-main{padding-right:42px}
+  .header-collapse-button{right:8px}
+  .occupancy-widget{max-width:340px;width:calc(100% - 84px);top:8px;left:8px}
+  .occupancy-widget-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .occupancy-widget-metrics>div{padding:4px}
+  .occupancy-widget-metrics small{font-size:.5rem}
+}

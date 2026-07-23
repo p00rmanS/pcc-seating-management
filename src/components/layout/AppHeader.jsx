@@ -1,4 +1,4 @@
-import { Building2, ChevronDown, ShieldCheck } from "lucide-react";
+import { Building2, ChevronDown, ChevronUp, ShieldCheck } from "lucide-react";
 
 export default function AppHeader({
   title,
@@ -17,6 +17,8 @@ export default function AppHeader({
   onOpenAccount,
   testingMode = false,
   onRetryCloud,
+  collapsed = false,
+  onToggleCollapsed,
 }) {
   const cloudLabel =
     cloudState === "live"
@@ -37,7 +39,8 @@ export default function AppHeader({
         : "bg-red-500";
 
   return (
-    <header className="workspace-header">
+    <header className={`workspace-header ${collapsed ? "is-collapsed" : ""}`}>
+      <button type="button" className="header-collapse-button" onClick={onToggleCollapsed} title={collapsed ? "Restore header" : "Minimize header"} aria-label={collapsed ? "Restore header" : "Minimize header"}>{collapsed ? <ChevronDown size={18}/> : <ChevronUp size={18}/>}</button>
       {testingMode && (
         <div className="development-banner">
           <strong>DEVELOPMENT / TEST MODE</strong>

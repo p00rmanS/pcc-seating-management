@@ -65,6 +65,8 @@ import {
   MapPinned,
   Search,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Undo2,
   Redo2,
 } from "lucide-react";
@@ -1934,6 +1936,8 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
             sidebarCollapsed: Boolean(saved?.sidebarCollapsed),
             inspectorCollapsed: Boolean(saved?.inspectorCollapsed),
             operationsView: Boolean(saved?.operationsView),
+            headerCollapsed: Boolean(saved?.headerCollapsed),
+            showOccupancyWidget: saved?.showOccupancyWidget !== false,
             pan: saved?.pan || { x: 0, y: 0 },
           },
         ];
@@ -1966,6 +1970,8 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => Boolean(viewSettingsByRestaurant[activeRid]?.sidebarCollapsed));
   const [inspectorCollapsed, setInspectorCollapsed] = useState(() => Boolean(viewSettingsByRestaurant[activeRid]?.inspectorCollapsed));
   const [operationsView, setOperationsView] = useState(() => Boolean(viewSettingsByRestaurant[activeRid]?.operationsView));
+  const [headerCollapsed, setHeaderCollapsed] = useState(() => Boolean(viewSettingsByRestaurant[activeRid]?.headerCollapsed));
+  const [showOccupancyWidget, setShowOccupancyWidget] = useState(() => viewSettingsByRestaurant[activeRid]?.showOccupancyWidget !== false);
   const [mobileFocusMode, setMobileFocusMode] = useState(false);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [mobileAddOpen, setMobileAddOpen] = useState(false);
@@ -1975,11 +1981,13 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     setSidebarCollapsed(Boolean(saved.sidebarCollapsed));
     setInspectorCollapsed(Boolean(saved.inspectorCollapsed));
     setOperationsView(Boolean(saved.operationsView));
+    setHeaderCollapsed(Boolean(saved.headerCollapsed));
+    setShowOccupancyWidget(saved.showOccupancyWidget !== false);
   }, [activeRid]);
 
   useEffect(() => {
-    updateViewSettings({ sidebarCollapsed, inspectorCollapsed, operationsView });
-  }, [sidebarCollapsed, inspectorCollapsed, operationsView]);
+    updateViewSettings({ sidebarCollapsed, inspectorCollapsed, operationsView, headerCollapsed, showOccupancyWidget });
+  }, [sidebarCollapsed, inspectorCollapsed, operationsView, headerCollapsed, showOccupancyWidget]);
 
   const tableClipboardRef = useRef([]);
   const [activeTool, setActiveTool] = useState("tables");
@@ -3330,7 +3338,7 @@ const toggleAreaEditMode = useCallback(() => {
   ];
 
   return (
-    <div className={`workspace-app ${mobileFocusMode ? "mobile-focus-mode" : ""} ${greeterView ? "greeter-view-active" : ""}`}>
+    <div className={`workspace-app ${mobileFocusMode ? "mobile-focus-mode" : ""} ${greeterView ? "greeter-view-active" : ""} ${headerCollapsed ? "header-collapsed" : ""}`}>
       {!mobileFocusMode && <AppHeader
         title={`${RESTAURANT_LAYOUT_CONFIG[activeRid].name} Seating Layout`}
         instructions={instructions}
@@ -3354,6 +3362,8 @@ const toggleAreaEditMode = useCallback(() => {
         onOpenAccount={() => setAccountModalOpen(true)}
         testingMode
         onRetryCloud={() => retryCloudRef.current?.()}
+        collapsed={headerCollapsed}
+        onToggleCollapsed={() => setHeaderCollapsed((value) => !value)}
       />}
 
       <main className={`workspace-main ${sidebarCollapsed || operationsView || mobileFocusMode || greeterView ? "sidebar-collapsed" : ""} ${inspectorCollapsed || operationsView || mobileFocusMode || greeterView ? "inspector-collapsed" : ""} ${operationsView || mobileFocusMode ? "operations-view" : ""}`}>
@@ -3603,6 +3613,8 @@ const toggleAreaEditMode = useCallback(() => {
           <div className="operations-view-toolbar">
             {!mobileFocusMode && !greeterView && <button type="button" onClick={() => setSidebarCollapsed((value) => !value)} title="Show or hide tools"><Menu size={16} /> <span>Tools</span></button>}
             {!mobileFocusMode && !greeterView && <button type="button" onClick={() => setInspectorCollapsed((value) => !value)} title="Show or hide inspector">{inspectorCollapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />} <span>Inspector</span></button>}
+            {!mobileFocusMode && !greeterView && <button type="button" className={headerCollapsed ? "active" : ""} onClick={() => setHeaderCollapsed((value) => !value)} title="Minimize or restore header">{headerCollapsed ? <ChevronDown size={16}/> : <ChevronUp size={16}/>}<span>{headerCollapsed ? "Show header" : "Minimize header"}</span></button>}
+            {!greeterView && <button type="button" className={showOccupancyWidget ? "active" : ""} onClick={() => setShowOccupancyWidget((value) => !value)} title="Show or hide occupancy summary"><Gauge size={16}/><span>{showOccupancyWidget ? "Hide summary" : "Show summary"}</span></button>}
             {!greeterView && <button type="button" className={mobileFocusMode ? "active" : ""} onClick={() => setMobileFocusMode((value) => !value)} title="Phone and tablet map mode"><Smartphone size={16}/><span>{mobileFocusMode ? "Show controls" : "Mobile map"}</span></button>}
             {activeRid === "gateway" && <button type="button" className={greeterView ? "active" : ""} onClick={() => setGreeterView((value) => !value)} title="Gateway greeter dashboard"><LayoutDashboard size={16}/><span>{greeterView ? "Floor map" : "Greeter"}</span></button>}
             {!mobileFocusMode && !greeterView && <button type="button" className={operationsView ? "active" : ""} onClick={() => setOperationsView((value) => !value)} title="Large floor operations view">{operationsView ? <Minimize2 size={16} /> : <Maximize2 size={16} />} <span>{operationsView ? "Exit focus" : "Full floor"}</span></button>}
@@ -3621,6 +3633,24 @@ const toggleAreaEditMode = useCallback(() => {
               }}
             />
           ) : <>
+          {showOccupancyWidget && !mobileFocusMode && (() => {
+            const visible = tables.filter((table) => !(table.childIds && table.childIds.length));
+            const available = visible.filter((table) => table.status !== "occupied").length;
+            const occupied = visible.filter((table) => table.status === "occupied").length;
+            const guests = visible.reduce((sum, table) => sum + (Number(table.guestCount) || (table.status === "occupied" ? Number(table.capacity) || 0 : 0)), 0);
+            const capacity = visible.reduce((sum, table) => sum + (Number(table.capacity) || 0), 0);
+            const percent = visible.length ? Math.round((occupied / visible.length) * 100) : 0;
+            return <section className="occupancy-widget" aria-label="Venue occupancy summary">
+              <div className="occupancy-widget-title"><span>{layoutConfig.name}</span><strong>{visible.length} tables</strong><button type="button" onClick={() => setShowOccupancyWidget(false)} title="Hide occupancy summary"><X size={14}/></button></div>
+              <div className="occupancy-widget-metrics">
+                <div><i className="metric-dot available"/><strong>{available}</strong><small>Available</small></div>
+                <div><i className="metric-dot occupied"/><strong>{occupied}</strong><small>Occupied</small></div>
+                <div><Users size={14}/><strong>{guests}</strong><small>Guests</small></div>
+                <div><Gauge size={14}/><strong>{capacity}</strong><small>Capacity</small></div>
+              </div>
+              <div className="occupancy-progress"><span style={{width: `${percent}%`}}/></div>
+            </section>;
+          })()}
           <FloorPlanCanvas
             layoutConfig={layoutConfig}
             areas={areas}
