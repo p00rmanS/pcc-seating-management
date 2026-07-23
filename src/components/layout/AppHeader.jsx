@@ -1,4 +1,4 @@
-import { Building2, ChevronDown, ChevronUp, ShieldCheck } from "lucide-react";
+import { Building2, ChevronDown, ChevronUp, ShieldCheck, Plus } from "lucide-react";
 
 export default function AppHeader({
   title,
@@ -19,6 +19,8 @@ export default function AppHeader({
   onRetryCloud,
   collapsed = false,
   onToggleCollapsed,
+  canCreateVenue = false,
+  onCreateVenue,
 }) {
   const cloudLabel =
     cloudState === "live"
@@ -83,6 +85,12 @@ export default function AppHeader({
             <small>{layoutConfig[restaurant.id].canvasWidth}×{layoutConfig[restaurant.id].canvasHeight}</small>
           </button>
         ))}
+        {canCreateVenue && (
+          <button type="button" className="venue-create-button" onClick={onCreateVenue} title="Create a new venue canvas">
+            <Plus size={17} />
+            <span>Venue</span>
+          </button>
+        )}
       </nav>
     </header>
   );

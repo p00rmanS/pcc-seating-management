@@ -1408,3 +1408,12 @@
   .occupancy-widget-metrics>div{padding:4px}
   .occupancy-widget-metrics small{font-size:.5rem}
 }
+
+/* v17.2 developer venue canvas manager */
+.workspace-venue-nav .venue-create-button{border-style:dashed;display:inline-flex;align-items:center;gap:6px;min-width:94px;justify-content:center;background:#fffdf5;color:#7c5b08}
+.venue-canvas-dialog{width:min(520px,calc(100vw - 28px))}
+.venue-canvas-form{grid-column:1/-1;display:grid;gap:12px;margin-top:4px}
+.venue-canvas-form label{display:grid;gap:5px;font-size:12px;font-weight:750;color:#475569}
+.venue-canvas-form input,.venue-canvas-form select{width:100%;border:1px solid #cbd5e1;border-radius:11px;padding:10px 11px;background:white;color:#172033;font-size:15px}
+.venue-size-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:560px){.venue-size-grid{grid-template-columns:1fr}}

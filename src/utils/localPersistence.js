@@ -19,6 +19,8 @@ function normalizeSnapshot(parsed) {
     currentRole: ["server", "lead", "admin", "developer", "director", "manager", "assistant_manager", "front_lead", "trainer"].includes(parsed.currentRole)
       ? parsed.currentRole
       : "server",
+    restaurants: Array.isArray(parsed.restaurants) ? parsed.restaurants : [],
+    layoutConfigByR: isObject(parsed.layoutConfigByR) ? parsed.layoutConfigByR : {},
     tablesByR: isObject(parsed.tablesByR) ? parsed.tablesByR : {},
     serversByR: isObject(parsed.serversByR) ? parsed.serversByR : {},
     groupsByR: isObject(parsed.groupsByR) ? parsed.groupsByR : {},

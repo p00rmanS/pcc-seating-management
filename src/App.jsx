@@ -1281,7 +1281,7 @@ function TableEditor({ table, siblings, parentTable, servers, groups, permission
         ) : (
           <button
             onClick={() => setSplitting(true)}
-            className="w-full text-xs py-2 rounded-lg bg-amber-600 text-white font-medium flex items-center justify-center gap-1.5"
+            className="split-this-table-button w-full text-xs py-2 rounded-lg bg-amber-600 text-white font-medium flex items-center justify-center gap-1.5"
           >
             <Scissors size={14} /> Split this table
           </button>
@@ -1724,6 +1724,44 @@ function GroupPanel({ groups, tables, onAdd, onRemove, canManage }) {
 
 // ---------- main app ----------
 
+
+function VenueCanvasManager({ open, restaurants, layoutConfig, onClose, onCreate }) {
+  const [name, setName] = useState("");
+  const [width, setWidth] = useState(4200);
+  const [height, setHeight] = useState(2800);
+  const [mode, setMode] = useState("blank");
+  const [sourceId, setSourceId] = useState(restaurants[0]?.id || "ohana");
+  useEffect(() => {
+    if (!open) return;
+    setName(""); setWidth(4200); setHeight(2800); setMode("blank"); setSourceId(restaurants[0]?.id || "ohana");
+  }, [open, restaurants]);
+  if (!open) return null;
+  const submit = () => {
+    const cleanName = name.trim();
+    if (!cleanName) return;
+    onCreate({ name: cleanName, width: Math.max(800, Number(width) || 4200), height: Math.max(600, Number(height) || 2800), mode, sourceId });
+  };
+  return <div className="pcc-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="pcc-dialog venue-canvas-dialog" role="dialog" aria-modal="true" aria-labelledby="venue-canvas-title">
+      <div className="pcc-dialog-icon primary"><Building2 size={23}/></div>
+      <div className="pcc-dialog-copy">
+        <h2 id="venue-canvas-title">Create New Venue</h2>
+        <p>Developer-only canvas creation. Add a blank layout or duplicate an existing venue.</p>
+      </div>
+      <div className="venue-canvas-form">
+        <label><span>Venue name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="New restaurant" autoFocus /></label>
+        <div className="venue-size-grid">
+          <label><span>Canvas width</span><input type="number" min="800" value={width} onChange={(e) => setWidth(e.target.value)} /></label>
+          <label><span>Canvas height</span><input type="number" min="600" value={height} onChange={(e) => setHeight(e.target.value)} /></label>
+        </div>
+        <label><span>Starting layout</span><select value={mode} onChange={(e) => setMode(e.target.value)}><option value="blank">Blank canvas</option><option value="duplicate">Duplicate existing venue</option></select></label>
+        {mode === "duplicate" && <label><span>Copy from</span><select value={sourceId} onChange={(e) => { const id=e.target.value; setSourceId(id); setWidth(layoutConfig[id]?.canvasWidth || 4200); setHeight(layoutConfig[id]?.canvasHeight || 2800); }}>{restaurants.map((venue) => <option key={venue.id} value={venue.id}>{venue.name}</option>)}</select></label>}
+      </div>
+      <div className="pcc-dialog-actions"><button type="button" className="dialog-cancel" onClick={onClose}>Cancel</button><button type="button" className="dialog-confirm" disabled={!name.trim()} onClick={submit}><Plus size={16}/> Create Venue</button></div>
+    </section>
+  </div>;
+}
+
 function SeatingWorkspace({ authSession }) {
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [accountPasswordOpen, setAccountPasswordOpen] = useState(false);
@@ -1756,11 +1794,34 @@ function SeatingWorkspace({ authSession }) {
   const lastCloudPartsRef = useRef({});
   const lastLocalSignatureRef = useRef("");
 
-  const [restaurants] = useState(seedRestaurants);
+  const initialRestaurants = useMemo(() => {
+    const custom = Array.isArray(localSnapshot?.restaurants) ? localSnapshot.restaurants : [];
+    const merged = [...seedRestaurants];
+    custom.forEach((venue) => { if (venue?.id && !merged.some((item) => item.id === venue.id)) merged.push(venue); });
+    return merged;
+  }, [localSnapshot]);
+  const [restaurants, setRestaurants] = useState(initialRestaurants);
+  const [layoutConfigByR, setLayoutConfigByR] = useState(() => {
+    const saved = localSnapshot?.layoutConfigByR || {};
+    const result = { ...RESTAURANT_LAYOUT_CONFIG };
+    initialRestaurants.forEach((venue) => {
+      if (!result[venue.id]) result[venue.id] = {
+        name: venue.name,
+        canvasWidth: Number(saved[venue.id]?.canvasWidth) || 4200,
+        canvasHeight: Number(saved[venue.id]?.canvasHeight) || 2800,
+        minZoom: Number(saved[venue.id]?.minZoom) || 0.25,
+        maxZoom: Number(saved[venue.id]?.maxZoom) || 2,
+        defaultZoom: Number(saved[venue.id]?.defaultZoom) || 0.55,
+        showGridDefault: saved[venue.id]?.showGridDefault !== false,
+      };
+    });
+    return result;
+  });
+  const [venueManagerOpen, setVenueManagerOpen] = useState(false);
   const [activeRid, setActiveRid] = useState(() =>
-    seedRestaurants.some((restaurant) => restaurant.id === localSnapshot?.activeRid)
+    initialRestaurants.some((restaurant) => restaurant.id === localSnapshot?.activeRid)
       ? localSnapshot.activeRid
-      : seedRestaurants[0].id
+      : initialRestaurants[0].id
   );
 
   const [layoutLocksByR, setLayoutLocksByR] = useState(() => {
@@ -1773,7 +1834,7 @@ function SeatingWorkspace({ authSession }) {
 
   const [tablesByR, setTablesByR] = useState(() => {
     const out = {};
-    seedRestaurants.forEach((restaurant) => {
+    initialRestaurants.forEach((restaurant) => {
       const savedTables = localSnapshot?.tablesByR?.[restaurant.id];
       out[restaurant.id] = Array.isArray(savedTables)
         ? savedTables
@@ -1783,7 +1844,7 @@ function SeatingWorkspace({ authSession }) {
   });
   const [serversByR, setServersByR] = useState(() =>
     Object.fromEntries(
-      seedRestaurants.map((restaurant) => [
+      initialRestaurants.map((restaurant) => [
         restaurant.id,
         Array.isArray(localSnapshot?.serversByR?.[restaurant.id])
           ? localSnapshot.serversByR[restaurant.id]
@@ -1793,7 +1854,7 @@ function SeatingWorkspace({ authSession }) {
   );
   const [groupsByR, setGroupsByR] = useState(() =>
     Object.fromEntries(
-      seedRestaurants.map((restaurant) => [
+      initialRestaurants.map((restaurant) => [
         restaurant.id,
         Array.isArray(localSnapshot?.groupsByR?.[restaurant.id])
           ? localSnapshot.groupsByR[restaurant.id]
@@ -1804,7 +1865,7 @@ function SeatingWorkspace({ authSession }) {
 
 const [areasByR, setAreasByR] = useState(() =>
   Object.fromEntries(
-    seedRestaurants.map((restaurant) => [
+    initialRestaurants.map((restaurant) => [
       restaurant.id,
       Array.isArray(localSnapshot?.areasByR?.[restaurant.id])
         ? localSnapshot.areasByR[restaurant.id]
@@ -1816,7 +1877,7 @@ const [areaEditMode, setAreaEditMode] = useState(false);
 const [selectedAreaId, setSelectedAreaId] = useState(null);
 const [venueOperationsByR, setVenueOperationsByR] = useState(() =>
   Object.fromEntries(
-    seedRestaurants.map((restaurant) => [
+    initialRestaurants.map((restaurant) => [
       restaurant.id,
       localSnapshot?.venueOperationsByR?.[restaurant.id] || { expectedGuests: 0, scannedGuests: 0, venueCapacity: 0 },
     ])
@@ -1827,7 +1888,7 @@ const [employees, setEmployees] = useState({});
 const [staffingDate, setStaffingDate] = useState(getHawaiiDateString);
 const [staffingAssignments, setStaffingAssignments] = useState({});
 const [staffingSaveState, setStaffingSaveState] = useState("idle");
-const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seedRestaurants.map((restaurant) => [restaurant.id, { dataUrl: null, opacity: 0.35, visible: true }])));
+const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(initialRestaurants.map((restaurant) => [restaurant.id, { dataUrl: null, opacity: 0.35, visible: true }])));
 
   useEffect(() => {
     window.localStorage.setItem("pcc-layout-locks-v14.3", JSON.stringify(layoutLocksByR));
@@ -1843,14 +1904,14 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
   const authorizedVenueIds = useMemo(
     () =>
       ["admin", "developer", "director"].includes(currentRole)
-        ? seedRestaurants.map((restaurant) => restaurant.id)
-        : seedRestaurants
+        ? restaurants.map((restaurant) => restaurant.id)
+        : restaurants
             .filter((restaurant) => authSession.profile.venueIds?.[restaurant.id] === true)
             .map((restaurant) => restaurant.id),
-    [authSession.profile.venueIds, currentRole]
+    [authSession.profile.venueIds, currentRole, restaurants]
   );
   const visibleRestaurants = useMemo(
-    () => seedRestaurants.filter((restaurant) => authorizedVenueIds.includes(restaurant.id)),
+    () => restaurants.filter((restaurant) => authorizedVenueIds.includes(restaurant.id)),
     [authorizedVenueIds]
   );
 
@@ -1899,9 +1960,9 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
   };
 
   const [canvasSettingsByR, setCanvasSettingsByR] = useState(() =>
-    Object.fromEntries(seedRestaurants.map((restaurant) => {
+    Object.fromEntries(initialRestaurants.map((restaurant) => {
       const saved = localSnapshot?.canvasSettingsByR?.[restaurant.id];
-      const defaults = RESTAURANT_LAYOUT_CONFIG[restaurant.id];
+      const defaults = layoutConfigByR[restaurant.id];
       return [restaurant.id, {
         width: Number(saved?.width) || defaults.canvasWidth,
         height: Number(saved?.height) || defaults.canvasHeight,
@@ -1912,7 +1973,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
   // ---------- per-restaurant view settings: zoom, pan (section 12) ----------
   const [viewSettingsByRestaurant, setViewSettingsByRestaurant] = useState(() =>
     Object.fromEntries(
-      seedRestaurants.map((restaurant) => {
+      initialRestaurants.map((restaurant) => {
         const saved = localSnapshot?.viewSettingsByRestaurant?.[restaurant.id];
         return [
           restaurant.id,
@@ -1920,8 +1981,8 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
             zoom:
               typeof saved?.zoom === "number"
                 ? saved.zoom
-                : RESTAURANT_LAYOUT_CONFIG[restaurant.id]?.defaultZoom ?? 1,
-            showGrid: typeof saved?.showGrid === "boolean" ? saved.showGrid : RESTAURANT_LAYOUT_CONFIG[restaurant.id]?.showGridDefault ?? false,
+                : layoutConfigByR[restaurant.id]?.defaultZoom ?? 1,
+            showGrid: typeof saved?.showGrid === "boolean" ? saved.showGrid : layoutConfigByR[restaurant.id]?.showGridDefault ?? false,
             tableNumberSize: saved?.tableNumberSize || "medium",
             capacitySize: saved?.capacitySize || "large",
             tableTextColor: saved?.tableTextColor === "black" ? "black" : "white",
@@ -1945,9 +2006,9 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     )
   );
   const layoutConfig = useMemo(() => ({
-    ...RESTAURANT_LAYOUT_CONFIG[activeRid],
-    canvasWidth: canvasSettingsByR[activeRid]?.width || RESTAURANT_LAYOUT_CONFIG[activeRid].canvasWidth,
-    canvasHeight: canvasSettingsByR[activeRid]?.height || RESTAURANT_LAYOUT_CONFIG[activeRid].canvasHeight,
+    ...layoutConfigByR[activeRid],
+    canvasWidth: canvasSettingsByR[activeRid]?.width || layoutConfigByR[activeRid].canvasWidth,
+    canvasHeight: canvasSettingsByR[activeRid]?.height || layoutConfigByR[activeRid].canvasHeight,
   }), [activeRid, canvasSettingsByR]);
   const zoom = viewSettingsByRestaurant[activeRid]?.zoom ?? layoutConfig.defaultZoom;
   const setZoom = (z) =>
@@ -1993,8 +2054,8 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
   const [activeTool, setActiveTool] = useState("tables");
   const [quickTableType, setQuickTableType] = useState("regular");
   const [customQuickCapacity, setCustomQuickCapacity] = useState(16);
-  const [historyByR, setHistoryByR] = useState(() => Object.fromEntries(seedRestaurants.map((r) => [r.id, []])));
-  const [futureByR, setFutureByR] = useState(() => Object.fromEntries(seedRestaurants.map((r) => [r.id, []])));
+  const [historyByR, setHistoryByR] = useState(() => Object.fromEntries(initialRestaurants.map((r) => [r.id, []])));
+  const [futureByR, setFutureByR] = useState(() => Object.fromEntries(initialRestaurants.map((r) => [r.id, []])));
   const safeSnapshotRef = useRef(null);
   const retryCloudRef = useRef(null);
   const localTableEditUntilRef = useRef({});
@@ -2003,6 +2064,8 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
     const localPayload = {
       activeRid,
       currentRole,
+      restaurants,
+      layoutConfigByR,
       tablesByR,
       serversByR,
       groupsByR,
@@ -2031,6 +2094,8 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
   }, [
     activeRid,
     currentRole,
+    restaurants,
+    layoutConfigByR,
     tablesByR,
     serversByR,
     groupsByR,
@@ -2051,7 +2116,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
       (remoteVenues) => {
         if (remoteVenues) {
           const operational = {};
-          seedRestaurants.forEach((restaurant) => {
+          restaurants.forEach((restaurant) => {
             const remote = remoteVenues[restaurant.id];
             const hasCloudLayout = remote?.metadata?.initialized === true ||
               (Array.isArray(remote?.tables) && remote.tables.length > 0) ||
@@ -2075,7 +2140,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
 
           const signature = JSON.stringify(operational);
           lastCloudSignatureRef.current = signature;
-          seedRestaurants.forEach((restaurant) => {
+          restaurants.forEach((restaurant) => {
             const data = operational[restaurant.id];
             if (!data) return;
             lastCloudPartsRef.current[restaurant.id] = {
@@ -2086,7 +2151,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
           });
 
           setTablesByR((previous) =>
-            Object.fromEntries(seedRestaurants.map((restaurant) => [
+            Object.fromEntries(restaurants.map((restaurant) => [
               restaurant.id,
               Date.now() < (localTableEditUntilRef.current[restaurant.id] || 0)
                 ? previous[restaurant.id] ?? []
@@ -2094,33 +2159,33 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
             ]))
           );
           setServersByR((previous) =>
-            Object.fromEntries(seedRestaurants.map((restaurant) => [
+            Object.fromEntries(restaurants.map((restaurant) => [
               restaurant.id,
               operational[restaurant.id].servers ?? previous[restaurant.id] ?? [],
             ]))
           );
           setGroupsByR((previous) =>
-            Object.fromEntries(seedRestaurants.map((restaurant) => [
+            Object.fromEntries(restaurants.map((restaurant) => [
               restaurant.id,
               operational[restaurant.id].groups ?? previous[restaurant.id] ?? [],
             ]))
           );
           setAreasByR((previous) =>
-            Object.fromEntries(seedRestaurants.map((restaurant) => [
+            Object.fromEntries(restaurants.map((restaurant) => [
               restaurant.id,
               operational[restaurant.id].areas ?? previous[restaurant.id] ?? [],
             ]))
           );
           setCanvasSettingsByR((previous) =>
-            Object.fromEntries(seedRestaurants.map((restaurant) => [
+            Object.fromEntries(restaurants.map((restaurant) => [
               restaurant.id,
               operational[restaurant.id].canvas?.width && operational[restaurant.id].canvas?.height
                 ? operational[restaurant.id].canvas
-                : previous[restaurant.id] || { width: RESTAURANT_LAYOUT_CONFIG[restaurant.id].canvasWidth, height: RESTAURANT_LAYOUT_CONFIG[restaurant.id].canvasHeight },
+                : previous[restaurant.id] || { width: layoutConfigByR[restaurant.id].canvasWidth, height: layoutConfigByR[restaurant.id].canvasHeight },
             ]))
           );
           setVenueOperationsByR((previous) =>
-            Object.fromEntries(seedRestaurants.map((restaurant) => [
+            Object.fromEntries(restaurants.map((restaurant) => [
               restaurant.id,
               operational[restaurant.id].operations ?? previous[restaurant.id] ?? { expectedGuests: 0, scannedGuests: 0, venueCapacity: 0 },
             ]))
@@ -2162,7 +2227,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(seed
         groups: groupsByR[restaurant.id] || [],
         areas: areasByR[restaurant.id] || [],
         operations: venueOperationsByR[restaurant.id] || { expectedGuests: 0, scannedGuests: 0, venueCapacity: 0 },
-        canvas: canvasSettingsByR[restaurant.id] || { width: RESTAURANT_LAYOUT_CONFIG[restaurant.id].canvasWidth, height: RESTAURANT_LAYOUT_CONFIG[restaurant.id].canvasHeight },
+        canvas: canvasSettingsByR[restaurant.id] || { width: layoutConfigByR[restaurant.id].canvasWidth, height: layoutConfigByR[restaurant.id].canvasHeight },
       }])
     );
     const signature = JSON.stringify(operational);
@@ -2883,7 +2948,7 @@ const deleteArea = useCallback(
 
 const resetAreas = useCallback(async () => {
   if (!permissions.canManageZones) return;
-  if (!await showConfirm("Reset all areas?", `${RESTAURANT_LAYOUT_CONFIG[activeRid].name} areas will return to their defaults.`, { confirmLabel: "Reset areas", tone: "warning" })) return;
+  if (!await showConfirm("Reset all areas?", `${layoutConfigByR[activeRid].name} areas will return to their defaults.`, { confirmLabel: "Reset areas", tone: "warning" })) return;
   setAreas(cloneDefaultAreas(activeRid));
   setSelectedAreaId(null);
 }, [activeRid, permissions.canManageZones, setAreas]);
@@ -3321,6 +3386,29 @@ const toggleAreaEditMode = useCallback(() => {
     }
   };
 
+  const createVenueCanvas = useCallback(({ name, width, height, mode, sourceId }) => {
+    if (currentRole !== "developer") return;
+    const baseId = name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "venue";
+    let id = baseId; let suffix = 2;
+    while (restaurants.some((venue) => venue.id === id)) id = `${baseId}-${suffix++}`;
+    const sourceTables = mode === "duplicate" ? structuredClone(tablesByR[sourceId] || []).map((table) => ({ ...table, id: uid("t"), parentId: null, childIds: [], groupId: null })) : [];
+    const sourceAreas = mode === "duplicate" ? structuredClone(areasByR[sourceId] || []).map((area) => ({ ...area, id: uid("area") })) : [];
+    const sourceServers = mode === "duplicate" ? structuredClone(serversByR[sourceId] || []).map((server) => ({ ...server, id: uid("server") })) : [];
+    const nextVenue = { id, name };
+    setRestaurants((previous) => [...previous, nextVenue]);
+    setLayoutConfigByR((previous) => ({ ...previous, [id]: { name, canvasWidth: width, canvasHeight: height, minZoom: 0.2, maxZoom: 2.5, defaultZoom: Math.min(1, Math.max(0.25, 1200 / width)), showGridDefault: true } }));
+    setTablesByR((previous) => ({ ...previous, [id]: sourceTables }));
+    setAreasByR((previous) => ({ ...previous, [id]: sourceAreas }));
+    setServersByR((previous) => ({ ...previous, [id]: sourceServers }));
+    setGroupsByR((previous) => ({ ...previous, [id]: [] }));
+    setVenueOperationsByR((previous) => ({ ...previous, [id]: { expectedGuests: 0, scannedGuests: 0, venueCapacity: 0 } }));
+    setCanvasSettingsByR((previous) => ({ ...previous, [id]: { width, height } }));
+    setViewSettingsByRestaurant((previous) => ({ ...previous, [id]: { zoom: Math.min(1, Math.max(0.25, 1200 / width)), showGrid: true, tableNumberSize: "medium", capacitySize: "large", tableTextColor: "white", accessibilityMode: false, showTableNumbers: true, showPax: true, showAreaLabels: true, showServerNames: true, showCelebrations: true, highlightEmptyTables: false, highlightTableNumbers: false, sidebarCollapsed: false, inspectorCollapsed: false, operationsView: false, headerCollapsed: false, showOccupancyWidget: true, pan: { x: 0, y: 0 } } }));
+    setHistoryByR((previous) => ({ ...previous, [id]: [] })); setFutureByR((previous) => ({ ...previous, [id]: [] }));
+    setBlueprintsByR((previous) => ({ ...previous, [id]: { dataUrl: null, opacity: 0.35, visible: true } }));
+    setActiveRid(id); setSelectedTableId(null); setSelectedAreaId(null); setVenueManagerOpen(false);
+  }, [currentRole, restaurants, tablesByR, areasByR, serversByR]);
+
   const toolTabs = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "tables", label: "Tables", icon: Plus },
@@ -3340,7 +3428,7 @@ const toggleAreaEditMode = useCallback(() => {
   return (
     <div className={`workspace-app ${mobileFocusMode ? "mobile-focus-mode" : ""} ${greeterView ? "greeter-view-active" : ""} ${headerCollapsed ? "header-collapsed" : ""}`}>
       {!mobileFocusMode && <AppHeader
-        title={`${RESTAURANT_LAYOUT_CONFIG[activeRid].name} Seating Layout`}
+        title={`${layoutConfigByR[activeRid].name} Seating Layout`}
         instructions={instructions}
         saveLabel={saveLabel}
         saveDotClass={saveDotClass}
@@ -3350,7 +3438,7 @@ const toggleAreaEditMode = useCallback(() => {
         currentRole={currentRole}
         visibleRestaurants={visibleRestaurants}
         activeRid={activeRid}
-        layoutConfig={RESTAURANT_LAYOUT_CONFIG}
+        layoutConfig={layoutConfigByR}
         onVenueChange={(restaurantId) => {
           if (!authorizedVenueIds.includes(restaurantId)) return;
           setActiveRid(restaurantId);
@@ -3364,6 +3452,8 @@ const toggleAreaEditMode = useCallback(() => {
         onRetryCloud={() => retryCloudRef.current?.()}
         collapsed={headerCollapsed}
         onToggleCollapsed={() => setHeaderCollapsed((value) => !value)}
+        canCreateVenue={currentRole === "developer"}
+        onCreateVenue={() => setVenueManagerOpen(true)}
       />}
 
       <main className={`workspace-main ${sidebarCollapsed || operationsView || mobileFocusMode || greeterView ? "sidebar-collapsed" : ""} ${inspectorCollapsed || operationsView || mobileFocusMode || greeterView ? "inspector-collapsed" : ""} ${operationsView || mobileFocusMode ? "operations-view" : ""}`}>
@@ -3690,6 +3780,7 @@ const toggleAreaEditMode = useCallback(() => {
             <nav className="mobile-map-dock" aria-label="Mobile map controls">
               {permissions.canManageTables && <button type="button" className={mobileAddOpen ? "active" : ""} onClick={() => setMobileAddOpen((value) => !value)}><Plus size={20}/><span>Table</span></button>}
               <button type="button" disabled={!selectedTable} className={mobileInspectorOpen ? "active" : ""} onClick={() => setMobileInspectorOpen((value) => !value)}><PanelRightOpen size={20}/><span>Edit</span></button>
+              {permissions.canSplitTables && <button type="button" disabled={!selectedTable || Boolean(selectedTable.parentId) || Boolean(selectedTable.childIds?.length) || selectedTable.isTableGroup} onClick={() => { setMobileInspectorOpen(true); requestAnimationFrame(() => document.querySelector('.mobile-table-inspector .split-this-table-button')?.click()); }}><Scissors size={20}/><span>Split</span></button>}
               <button type="button" disabled={(historyByR[activeRid] || []).length === 0} onClick={undo}><Undo2 size={20}/><span>Undo</span></button>
               <button type="button" disabled={(futureByR[activeRid] || []).length === 0} onClick={redo}><Redo2 size={20}/><span>Redo</span></button>
               <button type="button" onClick={fitZoom}><Maximize2 size={20}/><span>Fit</span></button>
@@ -3746,6 +3837,7 @@ const toggleAreaEditMode = useCallback(() => {
         />
       )}
 
+      <VenueCanvasManager open={venueManagerOpen} restaurants={restaurants} layoutConfig={layoutConfigByR} onClose={() => setVenueManagerOpen(false)} onCreate={createVenueCanvas} />
       <ActionDialog dialog={actionDialog} onResolve={resolveDialog} />
 
       {!mobileFocusMode && !greeterView && <WorkspaceFooter
