@@ -739,6 +739,7 @@ function TableChip({
   canDrag,
   canDelete,
   onContextDelete,
+  onOpenContextMenu,
   onToggleStatus,
   onRequestCanvasExpand,
   onBeginMove,
@@ -787,6 +788,13 @@ function TableChip({
 
   const onPointerDown = (e) => {
     e.stopPropagation();
+    clearLongPress();
+    if (e.pointerType === "touch") {
+      longPressRef.current = window.setTimeout(() => {
+        onSelect(table.id, e);
+        onOpenContextMenu?.(table.id, { x: e.clientX, y: e.clientY });
+      }, 650);
+    }
     if (!canDrag) return; // Servers can still tap-to-select via onPointerUp below
     onBeginMove?.();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -806,6 +814,7 @@ function TableChip({
     const dy = e.clientY - d.startY;
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) d.moved = true;
     if (d.moved) {
+      clearLongPress();
       const size = getTableDisplaySize(table);
       const nx = Math.max(0, d.origX + dx);
       const ny = Math.max(0, d.origY + dy);
@@ -814,15 +823,19 @@ function TableChip({
     }
   };
   const onPointerUp = (e) => {
+    clearLongPress();
     const d = dragRef.current;
     if (canDrag) e.currentTarget.releasePointerCapture(e.pointerId);
     if (!d.moved) onSelect(table.id, e);
     else onEndMove?.(table.id);
     dragRef.current.dragging = false;
   };
+  const longPressRef = useRef(null);
+  const clearLongPress = () => { if (longPressRef.current) window.clearTimeout(longPressRef.current); longPressRef.current = null; };
   const onContextMenu = (e) => {
     e.preventDefault();
-    if (canDelete) onContextDelete(table.id);
+    e.stopPropagation();
+    onOpenContextMenu?.(table.id, { x: e.clientX, y: e.clientY });
   };
   const onDoubleClick = (e) => {
     e.stopPropagation();
@@ -1415,6 +1428,7 @@ function FloorPlanCanvas({
   zoom,
   onZoomChange,
   onContextDelete,
+  onOpenContextMenu,
   onToggleStatus,
   onRequestCanvasExpand,
   blueprint,
@@ -1426,6 +1440,7 @@ function FloorPlanCanvas({
   displaySettings,
   panPosition,
   onPanChange,
+  onViewportChange,
 }) {
   const { canvasWidth, canvasHeight, minZoom, maxZoom, defaultZoom } = layoutConfig;
 
@@ -1488,6 +1503,22 @@ function FloorPlanCanvas({
     node.addEventListener("scroll", savePan, { passive: true });
     return () => node.removeEventListener("scroll", savePan);
   }, [onPanChange]);
+
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (!node) return undefined;
+    const report = () => onViewportChange?.({
+      scrollLeft: node.scrollLeft,
+      scrollTop: node.scrollTop,
+      width: node.clientWidth,
+      height: node.clientHeight,
+    });
+    report();
+    node.addEventListener("scroll", report, { passive: true });
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(report) : null;
+    observer?.observe(node);
+    return () => { node.removeEventListener("scroll", report); observer?.disconnect(); };
+  }, [onViewportChange, layoutConfig.name]);
 
   const startLasso = (event) => {
     if (areaEditMode || event.button !== 0 || event.shiftKey || event.target !== event.currentTarget) return;
@@ -1595,6 +1626,7 @@ function FloorPlanCanvas({
                   canDrag={permissions.canMoveTables}
                   canDelete={permissions.canDeleteTables}
                   onContextDelete={onContextDelete}
+                  onOpenContextMenu={onOpenContextMenu}
                   onToggleStatus={onToggleStatus}
                   onRequestCanvasExpand={onRequestCanvasExpand}
                   onBeginMove={onBeginTableMove}
@@ -2036,6 +2068,11 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(init
   const [mobileFocusMode, setMobileFocusMode] = useState(false);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [mobileAddOpen, setMobileAddOpen] = useState(false);
+  const [fullFloorToolsOpen, setFullFloorToolsOpen] = useState(false);
+  const [fullFloorInspectorOpen, setFullFloorInspectorOpen] = useState(false);
+  const [tableContextMenu, setTableContextMenu] = useState(null);
+  const [combineSourceId, setCombineSourceId] = useState(null);
+  const canvasViewportRef = useRef({ scrollLeft: 0, scrollTop: 0, width: 900, height: 600 });
   const [greeterView, setGreeterView] = useState(false);
   useEffect(() => {
     const saved = viewSettingsByRestaurant[activeRid] || {};
@@ -2368,7 +2405,8 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(init
     setSelectedTableId(id);
     setSelectedTableIds([id]);
     if (mobileFocusMode) setMobileInspectorOpen(true);
-  }, [bulkSelectMode, mobileFocusMode]);
+    if (operationsView) setFullFloorInspectorOpen(true);
+  }, [bulkSelectMode, mobileFocusMode, operationsView]);
 
   const clearTableSelection = useCallback(() => {
     setSelectedTableId(null);
@@ -2754,6 +2792,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(init
     const target = tables.find((table) => table.id === id);
     if (!target) return;
     if (target.parentId) { await showAlert("Table cannot be deleted", "Merge the split table before deleting an individual split part.", { tone: "warning" }); return; }
+    if (!await showConfirm("Delete table?", `Table ${target.number} will be removed from the floor. You can use Undo immediately after deletion.`, { confirmLabel: "Delete table", tone: "danger" })) return;
     pushHistory();
     setTables((prev) => prev.filter((t) => t.id !== id && t.parentId !== id));
     setSelectedTableId(null);
@@ -2823,11 +2862,14 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(init
   const addBlankTable = (capacity = 4, requestedType = quickTableType, placeInCurrentView = false) => {
     if (!permissions.canManageTables) return;
     pushHistory();
+    const viewport = canvasViewportRef.current || {};
     const viewPan = displaySettings.pan || { x: 0, y: 0 };
-    const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 900;
-    const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 600;
-    const viewX = Math.max(0, (Number(viewPan.x) + viewportWidth / 2) / Math.max(zoom, 0.1) - 19);
-    const viewY = Math.max(0, (Number(viewPan.y) + viewportHeight / 2) / Math.max(zoom, 0.1) - 19);
+    const scrollLeft = Number(viewport.scrollLeft ?? viewPan.x) || 0;
+    const scrollTop = Number(viewport.scrollTop ?? viewPan.y) || 0;
+    const viewportWidth = Number(viewport.width) || (typeof window !== "undefined" ? window.innerWidth : 900);
+    const viewportHeight = Number(viewport.height) || (typeof window !== "undefined" ? window.innerHeight : 600);
+    const viewX = Math.max(0, Math.min(layoutConfig.canvasWidth - 60, (scrollLeft + viewportWidth / 2) / Math.max(zoom, 0.1) - 19));
+    const viewY = Math.max(0, Math.min(layoutConfig.canvasHeight - 60, (scrollTop + viewportHeight / 2) / Math.max(zoom, 0.1) - 19));
     const createdId = uid("t");
     setTables((prev) => {
       const nextNumber = getNextTableNumber(prev);
@@ -2852,7 +2894,41 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(init
     setSelectedTableId(createdId);
     setSelectedTableIds([createdId]);
     setMobileInspectorOpen(true);
+    if (operationsView) setFullFloorInspectorOpen(true);
   };
+
+
+  const changeTableCapacity = useCallback((id, nextCapacity) => {
+    if (!permissions.canManageTables) return;
+    const capacity = Math.max(1, Math.min(300, Number(nextCapacity) || 1));
+    pushHistory();
+    setTables((previous) => previous.map((table) => table.id === id ? { ...table, capacity, partySize: table.partySize ? Math.min(Number(table.partySize), capacity) : table.partySize } : table));
+  }, [permissions.canManageTables, pushHistory, setTables]);
+
+  const duplicateTable = useCallback((id) => {
+    if (!permissions.canManageTables) return;
+    const source = tables.find((table) => table.id === id);
+    if (!source || source.parentId || source.isTableGroup) return;
+    pushHistory();
+    const copy = { ...structuredClone(source), id: uid("t"), number: String(getNextTableNumber(tables)), pos: { x: source.pos.x + 55, y: source.pos.y + 55 }, guestName: "", guestInitials: "", partySize: null, status: "available", statusUpdatedAt: null, childIds: null, parentId: null };
+    setTables((previous) => [...previous, copy]);
+    setSelectedTableId(copy.id); setSelectedTableIds([copy.id]);
+  }, [permissions.canManageTables, pushHistory, setTables, tables]);
+
+  const openTableContextMenu = useCallback((tableId, point) => {
+    const table = tables.find((item) => item.id === tableId);
+    if (!table) return;
+    setSelectedTableId(tableId); setSelectedTableIds([tableId]);
+    const width = 250, height = 440;
+    const x = Math.max(8, Math.min((point?.x || 20), window.innerWidth - width - 8));
+    const y = Math.max(8, Math.min((point?.y || 20), window.innerHeight - height - 8));
+    setTableContextMenu({ tableId, x, y });
+  }, [tables]);
+
+  const startCombineWith = useCallback((id) => {
+    setCombineSourceId(id);
+    setTableContextMenu(null);
+  }, []);
 
 
 const setAreas = useCallback(
@@ -3409,6 +3485,16 @@ const toggleAreaEditMode = useCallback(() => {
     setActiveRid(id); setSelectedTableId(null); setSelectedAreaId(null); setVenueManagerOpen(false);
   }, [currentRole, restaurants, tablesByR, areasByR, serversByR]);
 
+  useEffect(() => {
+    const closeMenus = (event) => {
+      if (event.key === "Escape") { setTableContextMenu(null); setCombineSourceId(null); }
+    };
+    const dismiss = () => setTableContextMenu(null);
+    window.addEventListener("keydown", closeMenus);
+    window.addEventListener("pointerdown", dismiss);
+    return () => { window.removeEventListener("keydown", closeMenus); window.removeEventListener("pointerdown", dismiss); };
+  }, []);
+
   const toolTabs = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "tables", label: "Tables", icon: Plus },
@@ -3495,7 +3581,7 @@ const toggleAreaEditMode = useCallback(() => {
                   <LockedButton
                     key={capacity}
                     allowed={permissions.canManageTables}
-                    onClick={() => addBlankTable(capacity, quickTableType)}
+                    onClick={() => addBlankTable(capacity, quickTableType, true)}
                     className="quick-capacity-button"
                     title={`Add a ${capacity}-seat ${getTableTypeDefinition(quickTableType).label} table`}
                   >
@@ -3505,7 +3591,7 @@ const toggleAreaEditMode = useCallback(() => {
               </div>
               <div className="quick-custom-capacity">
                 <label><span>Custom capacity</span><input type="number" min="1" max="300" value={customQuickCapacity} onChange={(event) => setCustomQuickCapacity(Number(event.target.value) || 1)} /></label>
-                <LockedButton allowed={permissions.canManageTables} onClick={() => addBlankTable(customQuickCapacity, quickTableType)} className="workspace-primary-action">+ Add custom table</LockedButton>
+                <LockedButton allowed={permissions.canManageTables} onClick={() => addBlankTable(customQuickCapacity, quickTableType, true)} className="workspace-primary-action">+ Add custom table</LockedButton>
               </div>
               <div className="bulk-table-tools">
                 <div className="bulk-table-tools-header">
@@ -3701,13 +3787,13 @@ const toggleAreaEditMode = useCallback(() => {
 
         <section className="workspace-center" aria-label="Seating floor workspace">
           <div className="operations-view-toolbar">
-            {!mobileFocusMode && !greeterView && <button type="button" onClick={() => setSidebarCollapsed((value) => !value)} title="Show or hide tools"><Menu size={16} /> <span>Tools</span></button>}
-            {!mobileFocusMode && !greeterView && <button type="button" onClick={() => setInspectorCollapsed((value) => !value)} title="Show or hide inspector">{inspectorCollapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />} <span>Inspector</span></button>}
+            {!mobileFocusMode && !greeterView && <button type="button" onClick={() => { if (operationsView) setFullFloorToolsOpen((value) => !value); else setSidebarCollapsed((value) => !value); }} title="Show or hide tools"><Menu size={16} /> <span>Tools</span></button>}
+            {!mobileFocusMode && !greeterView && <button type="button" onClick={() => { if (operationsView) setFullFloorInspectorOpen((value) => !value); else setInspectorCollapsed((value) => !value); }} title="Show or hide inspector">{inspectorCollapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />} <span>Inspector</span></button>}
             {!mobileFocusMode && !greeterView && <button type="button" className={headerCollapsed ? "active" : ""} onClick={() => setHeaderCollapsed((value) => !value)} title="Minimize or restore header">{headerCollapsed ? <ChevronDown size={16}/> : <ChevronUp size={16}/>}<span>{headerCollapsed ? "Show header" : "Minimize header"}</span></button>}
             {!greeterView && <button type="button" className={showOccupancyWidget ? "active" : ""} onClick={() => setShowOccupancyWidget((value) => !value)} title="Show or hide occupancy summary"><Gauge size={16}/><span>{showOccupancyWidget ? "Hide summary" : "Show summary"}</span></button>}
             {!greeterView && <button type="button" className={mobileFocusMode ? "active" : ""} onClick={() => setMobileFocusMode((value) => !value)} title="Phone and tablet map mode"><Smartphone size={16}/><span>{mobileFocusMode ? "Show controls" : "Mobile map"}</span></button>}
             {activeRid === "gateway" && <button type="button" className={greeterView ? "active" : ""} onClick={() => setGreeterView((value) => !value)} title="Gateway greeter dashboard"><LayoutDashboard size={16}/><span>{greeterView ? "Floor map" : "Greeter"}</span></button>}
-            {!mobileFocusMode && !greeterView && <button type="button" className={operationsView ? "active" : ""} onClick={() => setOperationsView((value) => !value)} title="Large floor operations view">{operationsView ? <Minimize2 size={16} /> : <Maximize2 size={16} />} <span>{operationsView ? "Exit focus" : "Full floor"}</span></button>}
+            {!mobileFocusMode && !greeterView && <button type="button" className={operationsView ? "active" : ""} onClick={() => setOperationsView((value) => { const next = !value; if (next) { setFullFloorToolsOpen(false); setFullFloorInspectorOpen(Boolean(selectedTableId)); } return next; })} title="Large floor operations view">{operationsView ? <Minimize2 size={16} /> : <Maximize2 size={16} />} <span>{operationsView ? "Exit focus" : "Full floor"}</span></button>}
           </div>
           {greeterView ? (
             <GatewayGreeterDashboard
@@ -3756,12 +3842,20 @@ const toggleAreaEditMode = useCallback(() => {
             groups={groups}
             selectedId={selectedTableId}
             selectedIds={selectedTableIds}
-            onSelect={selectTable}
+            onSelect={(id, event) => {
+              if (combineSourceId && id && id !== combineSourceId) {
+                combineTables([combineSourceId, id]);
+                setCombineSourceId(null);
+                return;
+              }
+              selectTable(id, event);
+            }}
             onMove={moveTable}
             permissions={permissions}
             zoom={zoom}
             onZoomChange={setZoom}
             onContextDelete={deleteTable}
+            onOpenContextMenu={openTableContextMenu}
             onToggleStatus={toggleTableStatus}
             onRequestCanvasExpand={requestCanvasExpansion}
             blueprint={blueprintsByR[activeRid]}
@@ -3773,18 +3867,19 @@ const toggleAreaEditMode = useCallback(() => {
             displaySettings={displaySettings}
             panPosition={displaySettings.pan}
             onPanChange={(pan) => updateViewSettings({ pan })}
+            onViewportChange={(viewport) => { canvasViewportRef.current = viewport; }}
           />
           </>}
-          {mobileFocusMode && <>
-            <div className="mobile-map-hint">Pinch with two fingers to zoom · Drag the map with two fingers</div>
-            <nav className="mobile-map-dock" aria-label="Mobile map controls">
+          {(mobileFocusMode || operationsView) && <>
+            {mobileFocusMode && <div className="mobile-map-hint">Pinch with two fingers to zoom · Drag the map with two fingers</div>}
+            <nav className={`mobile-map-dock ${operationsView && !mobileFocusMode ? "desktop-floor-dock" : ""}`} aria-label="Full floor map controls">
               {permissions.canManageTables && <button type="button" className={mobileAddOpen ? "active" : ""} onClick={() => setMobileAddOpen((value) => !value)}><Plus size={20}/><span>Table</span></button>}
-              <button type="button" disabled={!selectedTable} className={mobileInspectorOpen ? "active" : ""} onClick={() => setMobileInspectorOpen((value) => !value)}><PanelRightOpen size={20}/><span>Edit</span></button>
+              <button type="button" disabled={!selectedTable} className={(mobileFocusMode ? mobileInspectorOpen : fullFloorInspectorOpen) ? "active" : ""} onClick={() => mobileFocusMode ? setMobileInspectorOpen((value) => !value) : setFullFloorInspectorOpen((value) => !value)}><PanelRightOpen size={20}/><span>Edit</span></button>
               {permissions.canSplitTables && <button type="button" disabled={!selectedTable || Boolean(selectedTable.parentId) || Boolean(selectedTable.childIds?.length) || selectedTable.isTableGroup} onClick={() => { setMobileInspectorOpen(true); requestAnimationFrame(() => document.querySelector('.mobile-table-inspector .split-this-table-button')?.click()); }}><Scissors size={20}/><span>Split</span></button>}
               <button type="button" disabled={(historyByR[activeRid] || []).length === 0} onClick={undo}><Undo2 size={20}/><span>Undo</span></button>
               <button type="button" disabled={(futureByR[activeRid] || []).length === 0} onClick={redo}><Redo2 size={20}/><span>Redo</span></button>
               <button type="button" onClick={fitZoom}><Maximize2 size={20}/><span>Fit</span></button>
-              <button type="button" onClick={() => { setMobileFocusMode(false); setMobileInspectorOpen(false); setMobileAddOpen(false); }}><X size={20}/><span>Exit</span></button>
+              <button type="button" onClick={() => { if (mobileFocusMode) setMobileFocusMode(false); if (operationsView) setOperationsView(false); setMobileInspectorOpen(false); setFullFloorInspectorOpen(false); setMobileAddOpen(false); }}><X size={20}/><span>Exit</span></button>
             </nav>
             {mobileAddOpen && permissions.canManageTables && <section className="mobile-add-popover">
               <header><div><strong>Add a table</strong><small>Placed in the center of your current view</small></div><button type="button" onClick={() => setMobileAddOpen(false)}><X size={17}/></button></header>
@@ -3796,6 +3891,18 @@ const toggleAreaEditMode = useCallback(() => {
               <button className="mobile-inspector-close" type="button" onClick={() => setMobileInspectorOpen(false)}><ChevronRight size={20}/></button>
               <TableEditor table={selectedTable} siblings={siblings} parentTable={parentTable} servers={servers} groups={groups} permissions={permissions} displaySettings={displaySettings} onClose={() => { setSelectedTableId(null); setMobileInspectorOpen(false); }} onUpdate={updateTable} onSplit={splitTable} onMerge={mergeTable} onSplitGroup={splitTableGroup} onDelete={deleteTable} />
             </aside>}
+          {operationsView && !mobileFocusMode && fullFloorToolsOpen && <aside className="full-floor-tools-drawer">
+            <header><strong>Floor Tools</strong><button type="button" onClick={() => setFullFloorToolsOpen(false)}><X size={18}/></button></header>
+            <p>Add a table directly to the center of your current view.</p>
+            <label>Table category<select value={quickTableType} onChange={(event) => setQuickTableType(event.target.value)}>{TABLE_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+            <div className="mobile-capacity-grid">{[2,4,6,8,10,12].map((capacity) => <button type="button" key={capacity} onClick={() => addBlankTable(capacity, quickTableType, true)}>+{capacity}</button>)}</div>
+            <label>Custom capacity<input type="number" min="1" max="300" value={customQuickCapacity} onChange={(event) => setCustomQuickCapacity(Number(event.target.value) || 1)} /></label>
+            <button type="button" className="workspace-primary-action" onClick={() => addBlankTable(customQuickCapacity, quickTableType, true)}><Plus size={15}/> Add custom table</button>
+          </aside>}
+          {operationsView && !mobileFocusMode && fullFloorInspectorOpen && selectedTable && <aside className="full-floor-inspector-drawer">
+            <button className="mobile-inspector-close" type="button" onClick={() => setFullFloorInspectorOpen(false)}><ChevronRight size={20}/></button>
+            <TableEditor table={selectedTable} siblings={siblings} parentTable={parentTable} servers={servers} groups={groups} permissions={permissions} displaySettings={displaySettings} onClose={() => { setSelectedTableId(null); setFullFloorInspectorOpen(false); }} onUpdate={updateTable} onSplit={splitTable} onMerge={mergeTable} onSplitGroup={splitTableGroup} onDelete={deleteTable} />
+          </aside>}
           </>}
         </section>
 
@@ -3827,6 +3934,20 @@ const toggleAreaEditMode = useCallback(() => {
           )}
         </InspectorPanel>}
       </main>
+
+      {combineSourceId && <div className="combine-mode-banner"><Combine size={16}/><span>Select another table to combine with Table {tables.find((table) => table.id === combineSourceId)?.number || ""}</span><button type="button" onClick={() => setCombineSourceId(null)}>Cancel</button></div>}
+
+      {tableContextMenu && selectedTable && <div className="table-context-menu" style={{ left: tableContextMenu.x, top: tableContextMenu.y }} role="menu" onPointerDown={(event) => event.stopPropagation()}>
+        <div className="table-context-header"><div><strong>Table {selectedTable.number}</strong><span>{selectedTable.capacity} seats</span></div><button type="button" onClick={() => setTableContextMenu(null)}><X size={16}/></button></div>
+        <button type="button" onClick={() => { toggleTableStatus(selectedTable.id); setTableContextMenu(null); }}>{selectedTable.status === "occupied" ? "Mark Available" : "Mark Occupied"}</button>
+        <div className="context-capacity-row"><button type="button" onClick={() => changeTableCapacity(selectedTable.id, Number(selectedTable.capacity)-2)}><Minus size={14}/> 2</button><strong>{selectedTable.capacity} seats</strong><button type="button" onClick={() => changeTableCapacity(selectedTable.id, Number(selectedTable.capacity)+2)}><Plus size={14}/> 2</button></div>
+        <div className="context-preset-grid">{[2,4,6,8,10,12].map((capacity) => <button type="button" key={capacity} onClick={() => changeTableCapacity(selectedTable.id, capacity)}>{capacity}</button>)}</div>
+        <button type="button" onClick={() => { setTableContextMenu(null); if (operationsView) setFullFloorInspectorOpen(true); else if (mobileFocusMode) setMobileInspectorOpen(true); else setInspectorCollapsed(false); }}><PanelRightOpen size={15}/> Open Inspector</button>
+        {permissions.canSplitTables && <button type="button" disabled={Boolean(selectedTable.parentId) || Boolean(selectedTable.childIds?.length) || selectedTable.isTableGroup} onClick={() => { setTableContextMenu(null); if (operationsView) setFullFloorInspectorOpen(true); else setMobileInspectorOpen(true); requestAnimationFrame(() => document.querySelector('.full-floor-inspector-drawer .split-this-table-button, .mobile-table-inspector .split-this-table-button, .workspace-inspector .split-this-table-button')?.click()); }}><Scissors size={15}/> Split Table</button>}
+        {permissions.canManageTables && <button type="button" onClick={() => startCombineWith(selectedTable.id)}><Combine size={15}/> Combine With…</button>}
+        {permissions.canManageTables && <button type="button" onClick={() => { duplicateTable(selectedTable.id); setTableContextMenu(null); }}><Copy size={15}/> Duplicate</button>}
+        {permissions.canDeleteTables && <button type="button" className="context-danger" onClick={() => { const id=selectedTable.id; setTableContextMenu(null); deleteTable(id); }}><Trash2 size={15}/> Delete Table</button>}
+      </div>}
 
       {accountModalOpen && (
         <AccountSecurityModal
