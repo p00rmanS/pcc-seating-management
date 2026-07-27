@@ -217,6 +217,7 @@ export async function saveDailyOperationsRecord(venueId, date, record, metadata 
     leis: record?.leis || {},
     frozen: record?.frozen || {},
     frozenWorkflow: record?.frozenWorkflow || { status: "not_started" },
+    breakout: record?.breakout || {},
     pax: record?.pax || {},
     notes: record?.notes || "",
     updatedAt: serverTimestamp(),

@@ -546,6 +546,71 @@ function EditableArea({
   );
 }
 
+function BlueprintOverlay({ blueprint, canvasWidth, canvasHeight, editMode, zoom, onChange, onRequestCanvasExpand }) {
+  const interactionRef = useRef(null);
+  if (!blueprint?.dataUrl || blueprint.visible === false) return null;
+
+  const width = blueprint.width || canvasWidth;
+  const height = blueprint.height || canvasHeight;
+  const x = blueprint.x || 0;
+  const y = blueprint.y || 0;
+
+  const beginInteraction = (event, mode) => {
+    if (!editMode) return;
+    event.stopPropagation();
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    interactionRef.current = { mode, startX: event.clientX, startY: event.clientY, origX: x, origY: y, origW: width, origH: height };
+  };
+  const handleMove = (event) => {
+    const interaction = interactionRef.current;
+    if (!interaction) return;
+    const dx = (event.clientX - interaction.startX) / zoom;
+    const dy = (event.clientY - interaction.startY) / zoom;
+    if (interaction.mode === "move") {
+      const nextX = Math.max(0, interaction.origX + dx);
+      const nextY = Math.max(0, interaction.origY + dy);
+      onRequestCanvasExpand?.(nextX + width + 400, nextY + height + 400);
+      onChange({ x: nextX, y: nextY });
+    } else if (interaction.mode === "resize") {
+      const nextWidth = Math.max(120, interaction.origW + dx);
+      const nextHeight = Math.max(120, interaction.origH + dy);
+      onRequestCanvasExpand?.(x + nextWidth + 400, y + nextHeight + 400);
+      onChange({ width: nextWidth, height: nextHeight });
+    }
+  };
+  const endInteraction = (event) => {
+    if (interactionRef.current) event.currentTarget.releasePointerCapture?.(event.pointerId);
+    interactionRef.current = null;
+  };
+
+  return (
+    <div
+      className={`blueprint-overlay-wrap ${editMode ? "blueprint-edit-active" : ""}`}
+      style={{ position: "absolute", left: x, top: y, width, height, zIndex: 1 }}
+      onPointerDown={(event) => beginInteraction(event, "move")}
+      onPointerMove={handleMove}
+      onPointerUp={endInteraction}
+      onPointerCancel={endInteraction}
+      title={editMode ? "Drag to move · drag the handle to resize" : undefined}
+    >
+      <img className="venue-blueprint-overlay" src={blueprint.dataUrl} alt="Imported venue blueprint" style={{ opacity: blueprint.opacity ?? 0.35 }} draggable="false" />
+      {editMode && (
+        <button
+          type="button"
+          className="blueprint-resize-handle"
+          aria-label="Resize blueprint"
+          onPointerDown={(event) => beginInteraction(event, "resize")}
+          onPointerMove={handleMove}
+          onPointerUp={endInteraction}
+        >
+          <Maximize2 size={11} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function AreaEditor({
   areas,
   selectedArea,
@@ -1471,6 +1536,8 @@ function FloorPlanCanvas({
   onToggleStatus,
   onRequestCanvasExpand,
   blueprint,
+  blueprintEditMode = false,
+  onBlueprintChange,
   onBeginTableMove,
   onEndTableMove,
   onBeginAreaInteraction,
@@ -1631,9 +1698,15 @@ function FloorPlanCanvas({
             onPointerUp={endLasso}
             onPointerCancel={endLasso}
           >
-            {blueprint?.dataUrl && blueprint.visible !== false && (
-              <img className="venue-blueprint-overlay" src={blueprint.dataUrl} alt="Imported venue blueprint" style={{ opacity: blueprint.opacity ?? 0.35 }} draggable="false" />
-            )}
+            <BlueprintOverlay
+              blueprint={blueprint}
+              canvasWidth={canvasWidth}
+              canvasHeight={canvasHeight}
+              editMode={blueprintEditMode}
+              zoom={zoom}
+              onChange={onBlueprintChange}
+              onRequestCanvasExpand={onRequestCanvasExpand}
+            />
             {areas.map((area) => (
               <EditableArea
                 key={area.id}
@@ -1958,6 +2031,7 @@ const [areasByR, setAreasByR] = useState(() =>
   )
 );
 const [areaEditMode, setAreaEditMode] = useState(false);
+const [blueprintEditMode, setBlueprintEditMode] = useState(false);
 const [selectedAreaId, setSelectedAreaId] = useState(null);
 const [venueOperationsByR, setVenueOperationsByR] = useState(() =>
   Object.fromEntries(
@@ -1985,6 +2059,11 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
     window.localStorage.setItem("pcc-layout-baseline-meta-v14.3", JSON.stringify(layoutBaselineMetaByR));
   }, [layoutBaselineMetaByR]);
   useEffect(() => { if (layoutLocked) setAreaEditMode(false); }, [layoutLocked]);
+  useEffect(() => { setBlueprintEditMode(false); }, [activeRid]);
+
+  const updateBlueprint = useCallback((patch) => {
+    setBlueprintsByR((previous) => ({ ...previous, [activeRid]: { ...(previous[activeRid] || {}), ...patch } }));
+  }, [activeRid]);
 
   // ---------- authenticated roles & server-enforced venue access ----------
   const currentRole = authSession.profile.role;
@@ -3958,7 +4037,9 @@ const toggleAreaEditMode = useCallback(() => {
               layoutSavedAt={layoutBaselineMetaByR[activeRid] || null}
               onClearTables={clearAllTables}
               blueprint={blueprintsByR[activeRid]}
-              onBlueprintChange={(patch) => setBlueprintsByR((previous) => ({ ...previous, [activeRid]: { ...(previous[activeRid] || {}), ...patch } }))}
+              onBlueprintChange={updateBlueprint}
+              blueprintEditMode={blueprintEditMode}
+              onToggleBlueprintEditMode={() => setBlueprintEditMode((value) => !value)}
             />
           )}
 
@@ -4137,6 +4218,8 @@ const toggleAreaEditMode = useCallback(() => {
             onToggleStatus={toggleTableStatus}
             onRequestCanvasExpand={requestCanvasExpansion}
             blueprint={blueprintsByR[activeRid]}
+            blueprintEditMode={blueprintEditMode}
+            onBlueprintChange={updateBlueprint}
             onBeginTableMove={pushHistory}
             onEndTableMove={checkTableOverlapAfterMove}
             onBeginAreaInteraction={pushHistory}

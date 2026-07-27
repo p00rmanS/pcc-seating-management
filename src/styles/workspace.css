@@ -536,16 +536,42 @@
   cursor: grabbing;
 }
 
+.blueprint-overlay-wrap {
+  pointer-events: none;
+  touch-action: none;
+}
+.blueprint-overlay-wrap.blueprint-edit-active {
+  pointer-events: auto;
+  cursor: grab;
+  outline: 2px dashed #7c5ce7;
+  outline-offset: 2px;
+  background: rgba(124, 92, 231, 0.04);
+}
+.blueprint-overlay-wrap.blueprint-edit-active:active { cursor: grabbing; }
 .venue-blueprint-overlay {
-  position: absolute;
-  inset: 0;
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;
   object-position: top left;
   pointer-events: none;
   user-select: none;
-  z-index: 1;
+}
+.blueprint-resize-handle {
+  position: absolute;
+  right: -9px;
+  bottom: -9px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: #7c5ce7;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: nwse-resize;
+  box-shadow: 0 3px 8px rgba(15, 23, 42, 0.3);
+  touch-action: none;
 }
 
 .editable-area {
@@ -654,6 +680,9 @@
   font-size: 11px;
   font-weight: 700;
 }
+.blueprint-controls button.active { background: #7c5ce7; border-color: #7c5ce7; color: #fff; }
+.blueprint-position-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.blueprint-position-row button { display: flex; align-items: center; justify-content: center; gap: 5px; }
 
 .operations-dashboard {
   display: grid;
@@ -1663,7 +1692,29 @@
 .ops-flavor-config-row select{border:1px solid #dbe2eb;border-radius:8px;padding:6px;font-size:11px;}
 .ops-flavor-toggle{border:1px solid #dbe2eb;border-radius:8px;background:#fff;padding:6px 10px;font-size:11px;font-weight:700;white-space:nowrap;}
 
+/* Breakout / inventory tab */
+.ops-breakout-area-tabs{display:flex;flex-wrap:wrap;gap:6px;}
+.ops-breakout-area-tabs button{border:1px solid #dde3ec;border-radius:999px;background:#f8fafc;color:#536071;padding:7px 13px;font-size:12px;font-weight:700;}
+.ops-breakout-area-tabs button.active{background:#172033;border-color:#172033;color:#fff;}
+.ops-breakout-list{display:flex;flex-direction:column;border:1px solid #e3e8ef;border-radius:12px;overflow:hidden;}
+.ops-breakout-row{display:grid;grid-template-columns:minmax(0,1fr) 90px 110px 90px;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid #edf0f4;}
+.ops-breakout-row:last-child{border-bottom:0;}
+.ops-breakout-header{background:#f8fafc;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#6d7787;font-weight:800;}
+.ops-breakout-name{font-size:12px;font-weight:650;color:#263247;display:flex;flex-direction:column;}
+.ops-breakout-name small{font-size:10px;color:#94a3b8;font-weight:600;}
+.ops-breakout-row input{border:1px solid #dce2ea;border-radius:8px;padding:6px;font-size:12px;text-align:center;}
+.ops-breakout-config-row{grid-template-columns:1fr 1fr auto;}
+
+/* Gelato reorder highlight + freezer stock */
+.ops-reorder-banner{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:10px;background:#fff0f0;color:#9c2929;font-size:12px;font-weight:700;border:1px solid #f0c9c9;}
+.ops-frozen-card.needs-reorder{border-color:#e59a9a;background:#fffaf9;box-shadow:0 0 0 1px #f5c6c6;}
+.ops-reorder-chip{display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:#9c2929;background:#fde2e2;border-radius:999px;padding:3px 7px;}
+.ops-subheading{gap:6px;flex-wrap:wrap;}
+
 @media(max-width:700px){
+  .ops-breakout-row{grid-template-columns:minmax(0,1fr) 60px 74px 60px;gap:5px;padding:7px 6px;}
+  .ops-breakout-row input{padding:4px;font-size:11px;}
+
   .staffing-card-fields{grid-template-columns:1fr;}
   .ops-frozen-fields-grid{grid-template-columns:1fr 1fr;}
   .ops-frozen-summary-row{grid-template-columns:1fr;}

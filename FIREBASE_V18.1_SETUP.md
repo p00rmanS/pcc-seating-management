@@ -1,10 +1,13 @@
-# v18.1 Firebase Setup — Employee Operations View
+# Firebase Setup — Employee Operations View (v18.1, updated for v18.2)
 
-This release does not add new top-level Firebase paths. It changes the **shape**
-of existing paths and — critically — needs new/updated **Realtime Database
-rules**. Nothing below has been deployed. Merge it into your existing rules
-after review, and test every role in the Firebase Rules Playground before
-using it live, exactly as recommended in `FIREBASE_V17.4_SETUP.md`.
+This covers the Realtime Database rule changes needed for the read-only
+employee/operations seating view, current as of v18.2 (the account-linked
+assignment picker from the original v18.1 draft was removed — see the
+v18.2 note below each affected section). It changes the **shape** of
+existing paths and needs new/updated **Realtime Database rules**. Nothing
+below has been deployed. Merge it into your existing rules after review, and
+test every role in the Firebase Rules Playground before using it live,
+exactly as recommended in `FIREBASE_V17.4_SETUP.md`.
 
 ## New role
 
@@ -30,7 +33,6 @@ written for backward compatibility. New fields added by the Assignment Manager:
 
 ```json
 {
-  "employeeUid": "fB3k...authUid...",
   "displayName": "Malia K.",
   "position": "Line",
   "assignedAreaIds": ["area-lanai", "area-lounge"],
@@ -42,10 +44,13 @@ written for backward compatibility. New fields added by the Assignment Manager:
 }
 ```
 
-`employeeUid` is the **stable identifier** the employee's own client matches
-against `auth.currentUser.uid` to find "my assignment" — this is what makes
-the My Tables highlighting work, and why it must be a real Firebase Auth UID,
-not a typed name.
+**v18.2 update:** the `employeeUid` field and the account-linked picker were
+removed — assignments are free-text names only now, matching how the team
+actually fills these out. The live "who's serving what" mechanism is the
+Groups-based Servers dashboard instead (see `V18.2_RELEASE_NOTES.md`), which
+needs no account linking at all. This means the `pccSeating/v1/users`
+list-read rule below is **no longer required** — cut it unless you have
+another reason to need it.
 
 ### `pccSeating/v1/venues/{venueId}/dailyOperations/{date}`
 
@@ -81,10 +86,10 @@ transparently upgrades old string arrays on read, so no migration is required):
 
 ### `pccSeating/v1/users` (read only — new list-level access)
 
-No shape change. What's new is that **management roles now need list-read
-access to the whole `users` collection**, not just their own uid, so the
-Assignment Manager can present a picker of real employee accounts instead of
-free-text names.
+No shape change, and no rule change needed here — **superseded by v18.2.**
+The Assignment Manager no longer picks employee accounts, so there's no need
+to grant management list-read access to the whole `users` collection. Every
+account still reads/writes only its own profile, same as before v18.
 
 ## Proposed rules
 
@@ -99,11 +104,9 @@ role-group helper, reuse it instead of duplicating the inline checks below).
     "pccSeating": {
       "v1": {
 
-        // ---- NEW: management-only list read of all employee profiles ----
+        // ---- Unchanged from before v18: no list-read, self only ----
         "users": {
-          ".read": "auth != null && root.child('pccSeating/v1/users').child(auth.uid).child('role').val() != null && (['developer','admin','director','manager','assistant_manager','lead','front_lead','back_lead']).indexOf(root.child('pccSeating/v1/users').child(auth.uid).child('role').val()) >= 0",
           "$uid": {
-            // Existing behavior: an employee may always read/write their own profile.
             ".read": "auth != null && auth.uid === $uid",
             ".write": "auth != null && auth.uid === $uid"
           }
@@ -133,9 +136,9 @@ role-group helper, reuse it instead of duplicating the inline checks below).
             // ---- Staffing/assignments ----
             "staffing": {
               "$date": {
-                // Read: management + any active, authorized employee (needed
-                // so an employee's client can find its own assignment by uid
-                // and render My Tables highlighting).
+                // Read: management + any active, authorized employee (so
+                // operational roles can see today's assignment list in the
+                // Operations tab's Assignments section).
                 ".read": "auth != null && root.child('pccSeating/v1/users').child(auth.uid).child('active').val() === true && root.child('pccSeating/v1/users').child(auth.uid).child('venueIds').child($venueId).val() === true",
                 // Write: management only, unchanged from v17.4.
                 ".write": "auth != null && (['developer','admin','director','manager','assistant_manager','lead','front_lead','back_lead']).indexOf(root.child('pccSeating/v1/users').child(auth.uid).child('role').val()) >= 0"
@@ -198,13 +201,11 @@ so copy the actual `.read`/`.write` expressions from `tables` into `areas`,
      (should pass) and after `frozenWorkflow.status == "submitted"` (should fail).
    - A `manager` role writing `dailyOperations/{today}` after submission
      (should still pass — management can always reopen/edit).
-   - A `manager` role reading the full `users` list (should pass); an
-     `employee` attempting the same (should fail, falls back to their own
-     `$uid` node only).
-4. In the Assignment Manager (Staffing tool tab), link each assignment row to
-   a real employee account via the "Employee account" picker so `employeeUid`
-   is populated — free-text-only rows (no linked account) will never show a
-   My Tables highlight for that person, since there's no UID to match against.
+   - An `employee` reading a different employee's `pccSeating/v1/users/{otherUid}`
+     profile (should fail — self-read only, no list access).
+4. Add employees to Groups (Tools → Groups) and assign their tables from the
+   right-click "Assign to Server" menu or Tools → Tables bulk actions — that's
+   the live mechanism now, no account linking needed (see `V18.2_RELEASE_NOTES.md`).
 
 ## Example records
 

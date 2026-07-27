@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   CalendarDays,
   CheckCircle2,
   ChevronDown,
@@ -7,6 +8,7 @@ import {
   ClipboardList,
   Flower2,
   IceCreamBowl,
+  Package,
   Plus,
   Save,
   Shirt,
@@ -32,9 +34,69 @@ const DEFAULT_FROZEN = {
   gateway: ["Chocolate", "Cotton Candy", "Cookies and Cream", "Ube", "Mango Soft Serve", "Strawberry"],
 };
 const LEVELS = ["Full", "3/4 Full", "1/2 Full", "1/4 Full", "Almost Out", "Empty", "Not Served Today"];
+const NEEDS_REORDER_LEVELS = new Set(["Almost Out", "Empty"]);
 const UNIT_OPTIONS = ["tubs", "pans", "bags"];
 const PAX_SIZES = [1,2,3,4,5,6,7,8,9,10,12];
 const WORKFLOW_LABELS = { not_started: "Not Started", in_progress: "In Progress", submitted: "Submitted", reopened: "Reopened" };
+
+// Default breakout catalog — grouped by area, seeded from the operations team's list.
+const DEFAULT_BREAKOUT = {
+  "Drink Station": [
+    "Cup 12oz DB-WL Hot (Coffee Cups)", "20oz Clear Cups", "Lip Sippers", "Clear Straws", "Toothpicks",
+    "Wooden Chopsticks", "Wood Coffee Stirrers", "Hot Chocolate Packets", "Equal Packets", "Sugar Packets",
+    "Splenda Packets", "Salt Packets", "Pepper Packets", "Black Tea", "Refresh Mint Tea", "Green Tea",
+    "Chamomile Tea", "Tea Coconut Macadamia", "Tea Mango Maui", "Tea Hawaiian Pineapple",
+    "Gold Roast Decaf Coffee", "Vanilla Macadamia Coffee", "Honolulu Regular Ground Coffee",
+    "Coffee Filter", "Creamer Cups",
+  ],
+  "Ice-Cream Station": [
+    "Ice Cream Cones", "Oreo Crumbs", "Shredded Coconut", "Plain M&M", "Skittles",
+    "Chocolate Sprinkles", "Rainbow Sprinkles", "Marshmallows", "Cocoa Pebbles", "Lucky Charms",
+    "Fruit Loops", "Frosted Flakes", "Fruity Pebbles", "Graham Crumbs", "4 OZ Portion Cups",
+    "Paper Napkins", "Disposable Spoons",
+  ],
+  "Keiki Station": [
+    "Ketchup Packet", "Mayonnaise Packet", "Soy Sauce Packet", "Mustard Packet", "Tabasco Sauce Packet",
+    "Ranch Cups", "Sweet and Sour Sauce Cups", "BBQ Sauce Cups", "Honey Mustard Sauce Cups",
+    "Towelette Wipes", "4 OZ Portion Cups",
+  ],
+  "Back Area (Janitorial Items)": [
+    "Cloth Wiper", "Glove Medium", "Glove Large", "Glove XL", "Towel Roll Scott (Paper Towels)",
+    "Probe Wipes", "Floor Cleaner Spic&Span (Green Liquid)", "Dawn Regular (Dish Soap – Scrappers)",
+    "Cascade Silverware Presoak", "Disinfecting Cleaner Spray", "Sanitizer Clean Quick (Light Red Liquid)",
+    "Handsoap Safeguard", "Hand Sanitizer", "Cleaner Pine Sol", "Trash Liner Large", "Trash Liner Small",
+    "Blue Scour Pad (Sponge – Scrappers)", "Disposable Apron", "Bleach",
+  ],
+  "Back Area (Non-Food Cost Items)": [
+    "Whole Ahi", "Ice Cubes", "Kale", "Pineapple Soft Serve", "Whole Milk", "Plastic Wrap",
+    "Ziplock Bags", "Plain Salt", "BIB Mountain Dew", "BIB Pepsi Regular", "BIB Diet Pepsi",
+    "BIB Pepsi Zero", "BIB Orange Crush", "BIB Dr. Pepper", "BIB Starry Lime", "BIB Pink Lemonade",
+    "BIB Fruit Punch", "BIB Raspberry Iced Tea", "Lipton Sweetened Iced Tea", "Lipton Unsweetened Iced Tea",
+    "Plastic Fork", "Plastic Plates", "Butter Continental Chips",
+  ],
+};
+function slugify(value) {
+  return String(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+// Same string-or-object backward-compat pattern as normalizeFlavorConfig, plus
+// an "area" grouping key. Falls back to the full default catalog when nothing
+// has been saved yet.
+function normalizeBreakoutConfig(value) {
+  const list = Array.isArray(value) && value.length
+    ? value
+    : Object.entries(DEFAULT_BREAKOUT).flatMap(([area, names]) => names.map((name) => ({ area, name })));
+  return list
+    .filter(Boolean)
+    .map((item, index) => ({
+      id: item.id || `${slugify(item.area || "other")}--${slugify(item.name || index)}`,
+      area: item.area || "Other",
+      name: item.name || `Item ${index + 1}`,
+      code: item.code || "",
+      active: item.active !== false,
+      order: Number.isFinite(item.order) ? item.order : index,
+    }))
+    .sort((a, b) => a.order - b.order);
+}
 
 const MANAGEMENT_ROLES = new Set(["developer", "admin", "director", "manager", "assistant_manager", "lead", "front_lead", "back_lead"]);
 
@@ -123,12 +185,17 @@ export default function DailyOperationsHub({
   showConfirm,
 }) {
   const canManage = MANAGEMENT_ROLES.has(role);
+  // "employee" is the generic shared per-venue account (e.g. haleohana.e@) that
+  // handles every daily operations task for its venue, so it gets every
+  // data-entry section — only History stays management-only, matching the
+  // audit-trail convention every other role follows.
   const sectionAccess = useMemo(() => ({
     assignments: true,
-    cloths: canManage || role === "inventory" || role === "line",
-    leis: canManage || role === "inventory",
-    frozen: canManage || role === "gelato" || role === "dessert",
-    pax: canManage || role === "line" || role === "server" || role === "operations_server",
+    cloths: canManage || role === "inventory" || role === "line" || role === "employee",
+    leis: canManage || role === "inventory" || role === "employee",
+    frozen: canManage || role === "gelato" || role === "dessert" || role === "employee",
+    pax: canManage || role === "line" || role === "server" || role === "operations_server" || role === "employee",
+    breakout: canManage || role === "employee" || role === "inventory",
     history: canManage,
   }), [canManage, role]);
   const firstTab = Object.keys(sectionAccess).find((key) => sectionAccess[key]) || "assignments";
@@ -140,6 +207,8 @@ export default function DailyOperationsHub({
   const [newItem, setNewItem] = useState("");
   const [newFlavorName, setNewFlavorName] = useState("");
   const [newFlavorUnit, setNewFlavorUnit] = useState("tubs");
+  const [newBreakoutName, setNewBreakoutName] = useState("");
+  const [breakoutAreaTab, setBreakoutAreaTab] = useState(null);
 
   useEffect(() => { if (!sectionAccess[activeTab]) setActiveTab(firstTab); }, [activeTab, firstTab, sectionAccess]);
   useEffect(() => subscribeToOperationsSettings(venueId, setSettings, console.error), [venueId]);
@@ -155,6 +224,16 @@ export default function DailyOperationsHub({
     [settings?.frozenItems, venueId]
   );
   const activeFlavors = useMemo(() => frozenConfig.filter((flavor) => flavor.active), [frozenConfig]);
+  const breakoutConfig = useMemo(() => normalizeBreakoutConfig(settings?.breakoutItems), [settings?.breakoutItems]);
+  const activeBreakoutItems = useMemo(() => breakoutConfig.filter((item) => item.active), [breakoutConfig]);
+  const breakoutAreaNames = useMemo(() => {
+    const seen = [];
+    activeBreakoutItems.forEach((item) => { if (!seen.includes(item.area)) seen.push(item.area); });
+    return seen;
+  }, [activeBreakoutItems]);
+  useEffect(() => {
+    if (breakoutAreaNames.length && !breakoutAreaNames.includes(breakoutAreaTab)) setBreakoutAreaTab(breakoutAreaNames[0]);
+  }, [breakoutAreaNames, breakoutAreaTab]);
 
   const current = useMemo(() => ({
     cloths: { ...blankCounts(clothItems), ...(record?.cloths || {}) },
@@ -169,12 +248,14 @@ export default function DailyOperationsHub({
         actualClosing: legacy.actualClosing ?? legacy.quantity ?? 0,
         status: legacy.status ?? legacy.level ?? "Full",
         notes: legacy.notes ?? legacy.note ?? "",
+        freezerStock: legacy.freezerStock ?? 0,
       }];
     })),
     frozenWorkflow: record?.frozenWorkflow || { status: "not_started" },
+    breakout: Object.fromEntries(breakoutConfig.map((item) => [item.id, { stock: 0, stockUnit: "", orderQuantity: 0, ...(record?.breakout?.[item.id] || {}) }])),
     pax: { ...Object.fromEntries(PAX_SIZES.map((size) => [size, 0])), ...(record?.pax || {}) },
     notes: record?.notes || "",
-  }), [clothItems, frozenConfig, leiItems, record]);
+  }), [clothItems, frozenConfig, breakoutConfig, leiItems, record]);
 
   const workflowStatusKey = current.frozenWorkflow?.status || "not_started";
   const frozenLocked = !canManage && workflowStatusKey === "submitted";
@@ -284,6 +365,19 @@ export default function DailyOperationsHub({
     }));
   };
 
+  const updateBreakoutConfig = (nextList) =>
+    saveOperationsSettings(venueId, { breakoutItems: nextList }, { uid: profile?.uid, name: profile?.displayName });
+  const addBreakoutItem = async (area) => {
+    const clean = newBreakoutName.trim();
+    if (!clean || !area) return;
+    if (breakoutConfig.some((item) => item.area === area && item.name.toLowerCase() === clean.toLowerCase())) return;
+    await updateBreakoutConfig([...breakoutConfig, { id: `${slugify(area)}--${slugify(clean)}-${Date.now()}`, area, name: clean, code: "", active: true, order: breakoutConfig.length }]);
+    setNewBreakoutName("");
+  };
+  const renameBreakoutItem = (id, name) => updateBreakoutConfig(breakoutConfig.map((item) => (item.id === id ? { ...item, name } : item)));
+  const setBreakoutItemCode = (id, code) => updateBreakoutConfig(breakoutConfig.map((item) => (item.id === id ? { ...item, code } : item)));
+  const toggleBreakoutItemActive = (id) => updateBreakoutConfig(breakoutConfig.map((item) => (item.id === id ? { ...item, active: !item.active } : item)));
+
   const visibleTables = tables.filter((table) => !(table.childIds && table.childIds.length));
   const livePax = visibleTables.reduce((result, table) => {
     if (table.status !== "occupied") return result;
@@ -298,7 +392,8 @@ export default function DailyOperationsHub({
 
   const tabs = [
     ["assignments", "Assignment", ClipboardList], ["cloths", "Cloths", Shirt], ["leis", "Leis", Flower2],
-    ["frozen", "Gelato / Ice Cream", IceCreamBowl], ["pax", "Pax", UsersRound], ["history", "History", CalendarDays],
+    ["frozen", "Gelato / Ice Cream", IceCreamBowl], ["breakout", "Breakout", Package], ["pax", "Pax", UsersRound],
+    ["history", "History", CalendarDays],
   ].filter(([id]) => sectionAccess[id]);
 
   return (
@@ -348,14 +443,26 @@ export default function DailyOperationsHub({
 
         {frozenLocked && <div className="ops-locked-banner">This breakout has been submitted and is locked. Ask a manager to reopen it to make changes.</div>}
 
+        {(() => {
+          const reorderCount = activeFlavors.filter((flavor) => NEEDS_REORDER_LEVELS.has(current.frozen[flavor.name]?.status)).length;
+          return reorderCount > 0 && (
+            <div className="ops-reorder-banner"><AlertTriangle size={14}/> {reorderCount} flavor{reorderCount === 1 ? "" : "s"} almost out or empty — needs ordering.</div>
+          );
+        })()}
+
         <div className="ops-frozen-grid">
           {activeFlavors.map((flavor) => {
             const value = current.frozen[flavor.name];
             const expectedClosing = Math.max(0, Number(value.opening || 0) + Number(value.added || 0) - Number(value.used || 0) - Number(value.damaged || 0));
             const variance = Math.round((Number(value.actualClosing || 0) - expectedClosing) * 100) / 100;
+            const needsReorder = NEEDS_REORDER_LEVELS.has(value.status);
             return (
-              <div className="ops-frozen-card ops-frozen-card-v2" key={flavor.id}>
-                <div className="ops-subheading"><strong>{flavor.name}</strong><span className="ops-unit-chip">{flavor.unit}</span></div>
+              <div className={`ops-frozen-card ops-frozen-card-v2 ${needsReorder ? "needs-reorder" : ""}`} key={flavor.id}>
+                <div className="ops-subheading">
+                  <strong>{flavor.name}</strong>
+                  <span className="ops-unit-chip">{flavor.unit}</span>
+                  {needsReorder && <span className="ops-reorder-chip"><AlertTriangle size={11}/> Order</span>}
+                </div>
                 <div className="ops-frozen-fields-grid">
                   <DecimalStepper label="Opening" value={value.opening} disabled={frozenLocked} onChange={(next)=>patchSection("frozen",{[flavor.name]:{...value,opening:next}})}/>
                   <DecimalStepper label="Added" value={value.added} disabled={frozenLocked} onChange={(next)=>patchSection("frozen",{[flavor.name]:{...value,added:next}})}/>
@@ -368,6 +475,7 @@ export default function DailyOperationsHub({
                   <div className={`ops-variance-chip ${variance < 0 ? "negative" : variance > 0 ? "positive" : ""}`}><span>Variance</span><strong>{variance > 0 ? `+${variance}` : variance}</strong></div>
                 </div>
                 <label><span>Status</span><select value={value.status||"Full"} disabled={frozenLocked} onChange={(event)=>patchSection("frozen",{[flavor.name]:{...value,status:event.target.value}})}>{LEVELS.map((level)=><option key={level}>{level}</option>)}</select></label>
+                <DecimalStepper label="Freezer stock (backup, not at station)" value={value.freezerStock} disabled={frozenLocked} onChange={(next)=>patchSection("frozen",{[flavor.name]:{...value,freezerStock:next}})}/>
                 <input className="ops-note-input" placeholder="Optional note" disabled={frozenLocked} value={value.notes||""} onChange={(event)=>patchSection("frozen",{[flavor.name]:{...value,notes:event.target.value}})}/>
               </div>
             );
@@ -405,6 +513,56 @@ export default function DailyOperationsHub({
               <input value={newFlavorName} placeholder="Add another flavor" onChange={(event) => setNewFlavorName(event.target.value)} />
               <select value={newFlavorUnit} onChange={(event) => setNewFlavorUnit(event.target.value)}>{UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}</select>
               <button type="button" onClick={addFlavor}><Plus size={14}/> Add</button>
+            </div>
+          </div>
+        )}
+      </section>}
+
+      {activeTab === "breakout" && <section className="ops-panel">
+        <div className="ops-panel-heading"><div><h3>Breakout / Inventory</h3><p>Track stock on hand and how much to order, by area.</p></div></div>
+
+        <div className="ops-breakout-area-tabs">
+          {breakoutAreaNames.map((area) => (
+            <button type="button" key={area} className={breakoutAreaTab === area ? "active" : ""} onClick={() => setBreakoutAreaTab(area)}>{area}</button>
+          ))}
+          {breakoutAreaNames.length === 0 && <span className="ops-empty">No breakout areas configured yet.</span>}
+        </div>
+
+        <div className="ops-breakout-list">
+          <div className="ops-breakout-row ops-breakout-header">
+            <span>Product</span><span>Stock</span><span>Unit</span><span>Order Qty</span>
+          </div>
+          {activeBreakoutItems.filter((item) => item.area === breakoutAreaTab).map((item) => {
+            const value = current.breakout[item.id];
+            return (
+              <div className="ops-breakout-row" key={item.id}>
+                <span className="ops-breakout-name">{item.name}{item.code && <small>{item.code}</small>}</span>
+                <input type="number" min="0" step="0.5" value={value.stock} onChange={(event) => patchSection("breakout", { [item.id]: { ...value, stock: Math.max(0, Number(event.target.value) || 0) } })} />
+                <input type="text" placeholder="case, box…" value={value.stockUnit} onChange={(event) => patchSection("breakout", { [item.id]: { ...value, stockUnit: event.target.value } })} />
+                <input type="number" min="0" value={value.orderQuantity} onChange={(event) => patchSection("breakout", { [item.id]: { ...value, orderQuantity: Math.max(0, Number(event.target.value) || 0) } })} />
+              </div>
+            );
+          })}
+          {breakoutAreaTab && activeBreakoutItems.filter((item) => item.area === breakoutAreaTab).length === 0 && <div className="ops-empty">No items in this area yet.</div>}
+        </div>
+
+        <button type="button" className="ops-primary ops-save" onClick={saveRecord}><Save size={14}/>{saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : "Save breakout counts"}</button>
+
+        {canManage && (
+          <div className="ops-flavor-config">
+            <h4>Breakout item configuration</h4>
+            <div className="ops-flavor-config-list">
+              {breakoutConfig.filter((item) => item.area === breakoutAreaTab).map((item) => (
+                <div className={`ops-flavor-config-row ops-breakout-config-row ${!item.active ? "inactive" : ""}`} key={item.id}>
+                  <input value={item.name} onChange={(event) => renameBreakoutItem(item.id, event.target.value)} />
+                  <input placeholder="Code (optional)" value={item.code} onChange={(event) => setBreakoutItemCode(item.id, event.target.value)} />
+                  <button type="button" className="ops-flavor-toggle" onClick={() => toggleBreakoutItemActive(item.id)}>{item.active ? "Deactivate" : "Restore"}</button>
+                </div>
+              ))}
+            </div>
+            <div className="ops-inline-add">
+              <input value={newBreakoutName} placeholder={`Add item to ${breakoutAreaTab || "this area"}`} onChange={(event) => setNewBreakoutName(event.target.value)} />
+              <button type="button" onClick={() => addBreakoutItem(breakoutAreaTab)}><Plus size={14}/> Add</button>
             </div>
           </div>
         )}
