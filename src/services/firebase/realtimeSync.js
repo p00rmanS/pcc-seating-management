@@ -1,4 +1,5 @@
 import {
+  get,
   onValue,
   push,
   ref,
@@ -171,5 +172,57 @@ export async function saveVenueStaffing(venueId, date, assignments, metadata = {
     updatedAt: serverTimestamp(),
     updatedByUid: metadata.uid || null,
     updatedByName: metadata.name || null,
+  });
+}
+
+// One-off (non-subscribed) read used by the manager "Copy yesterday" action.
+export async function fetchVenueStaffing(venueId, date) {
+  if (!venueId || !date) return null;
+  const snapshot = await get(ref(db, `${ROOT_PATH}/venues/${venueId}/staffing/${date}`));
+  return snapshot.val() || null;
+}
+
+export function subscribeToOperationsSettings(venueId, onData, onError) {
+  if (!venueId) return () => {};
+  return onValue(
+    ref(db, `${ROOT_PATH}/venues/${venueId}/operationsSettings`),
+    (snapshot) => onData(snapshot.val() || {}),
+    onError
+  );
+}
+
+export async function saveOperationsSettings(venueId, patch, metadata = {}) {
+  if (!venueId) throw new Error("A venue is required.");
+  await update(ref(db, `${ROOT_PATH}/venues/${venueId}/operationsSettings`), {
+    ...patch,
+    updatedAt: serverTimestamp(),
+    updatedByUid: metadata.uid || null,
+    updatedByName: metadata.name || null,
+  });
+}
+
+export function subscribeToDailyOperations(venueId, date, onData, onError) {
+  if (!venueId || !date) return () => {};
+  const baseRef = ref(db, `${ROOT_PATH}/venues/${venueId}/dailyOperations`);
+  return onValue(baseRef, (snapshot) => {
+    const all = snapshot.val() || {};
+    onData(all[date] || null, all);
+  }, onError);
+}
+
+export async function saveDailyOperationsRecord(venueId, date, record, metadata = {}) {
+  if (!venueId || !date) throw new Error("Venue and date are required.");
+  await set(ref(db, `${ROOT_PATH}/venues/${venueId}/dailyOperations/${date}`), {
+    cloths: record?.cloths || {},
+    leis: record?.leis || {},
+    frozen: record?.frozen || {},
+    frozenWorkflow: record?.frozenWorkflow || { status: "not_started" },
+    pax: record?.pax || {},
+    notes: record?.notes || "",
+    updatedAt: serverTimestamp(),
+    updatedAtClient: new Date().toISOString(),
+    updatedByUid: metadata.uid || null,
+    updatedByName: metadata.name || null,
+    updatedByRole: metadata.role || null,
   });
 }

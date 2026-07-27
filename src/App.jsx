@@ -11,6 +11,7 @@ import {
   subscribeToEmployees,
   subscribeToVenueStaffing,
   saveVenueStaffing,
+  fetchVenueStaffing,
 } from "./services/firebase/realtimeSync";
 import LoginScreen from "./components/auth/LoginScreen";
 import ProfileSetupScreen from "./components/auth/ProfileSetupScreen";
@@ -26,6 +27,8 @@ import VenueDesignerPanel from "./components/designer/VenueDesignerPanel";
 import DailyStaffingPanel from "./components/operations/DailyStaffingPanel";
 import HelpPanel from "./components/operations/HelpPanel";
 import LiveOperationsDashboard from "./components/operations/LiveOperationsDashboard";
+import DailyOperationsHub from "./components/operations/DailyOperationsHub";
+import MyTablesBar from "./components/operations/MyTablesBar";
 import TestingPanel from "./components/testing/TestingPanel";
 import "./styles/workspace.css";
 import { signOutEmployee, subscribeToAuthSession } from "./services/auth/authService";
@@ -69,6 +72,7 @@ import {
   ChevronUp,
   Undo2,
   Redo2,
+  PackageOpen,
 } from "lucide-react";
 
 /* ============================================================
@@ -413,6 +417,7 @@ function EditableArea({
   onRequestCanvasExpand,
   onBeginInteraction,
   displaySettings,
+  isHighlighted = false,
 }) {
   const interactionRef = useRef(null);
 
@@ -483,7 +488,7 @@ function EditableArea({
 
   return (
     <div
-      className={`editable-area ${editMode ? "area-editable" : ""} ${selected ? "area-selected" : ""} ${area.locked ? "area-locked" : ""} ${area.hidden ? "area-hidden-preview" : ""} ${(area.areaKind ?? "seating") === "landmark" ? "area-landmark" : "area-seating"}`}
+      className={`editable-area ${editMode ? "area-editable" : ""} ${selected ? "area-selected" : ""} ${area.locked ? "area-locked" : ""} ${area.hidden ? "area-hidden-preview" : ""} ${(area.areaKind ?? "seating") === "landmark" ? "area-landmark" : "area-seating"} ${isHighlighted ? "area-assignment-highlighted" : ""}`}
       style={{
         left: area.x,
         top: area.y,
@@ -744,6 +749,8 @@ function TableChip({
   onRequestCanvasExpand,
   onBeginMove,
   onEndMove,
+  isHighlighted = false,
+  isDimmed = false,
 }) {
   const isSplitParent = table.childIds && table.childIds.length > 0;
   const dragRef = useRef({ dragging: false, moved: false, startX: 0, startY: 0, origX: 0, origY: 0 });
@@ -857,7 +864,7 @@ function TableChip({
           isSelected ? "ring-4 ring-offset-1 ring-purple-500" : ""
         } ${isSplitChild ? "ring-2 ring-offset-1 ring-orange-500" : ""} ${hasGuestHighlight ? "guest-highlight-active" : ""} ${
           typeDefinition.shape === "circle" ? "rounded-full" : "rounded-lg"
-        }`}
+        } ${isHighlighted ? "table-assignment-highlighted" : ""} ${isDimmed ? "table-assignment-dimmed" : ""}`}
         style={{
           width: displaySize.width,
           height: displaySize.height,
@@ -1045,14 +1052,46 @@ function TableEditor({ table, siblings, parentTable, servers, groups, permission
     </>
   );
 
-  // ---------- Server view: read-only table info, editable status/name only ----------
-  if (!permissions.canEditLayout) {
-    const infoRow = (label, value) => (
-      <div className="flex items-center justify-between text-sm py-1 border-b border-slate-100 last:border-0">
-        <span className="text-slate-500">{label}</span>
-        <span className="font-medium text-slate-800">{value}</span>
+  const infoRow = (label, value) => (
+    <div className="flex items-center justify-between text-sm py-1 border-b border-slate-100 last:border-0">
+      <span className="text-slate-500">{label}</span>
+      <span className="font-medium text-slate-800">{value}</span>
+    </div>
+  );
+
+  // ---------- Employee view: fully read-only, no editable controls at all ----------
+  if (!permissions.canEditLayout && !permissions.canUpdateStatus && !permissions.canEditGuestName) {
+    const highlight = getGuestHighlight(table.guestHighlight);
+    return (
+      <div className="border border-slate-300 rounded-xl bg-white shadow-lg p-4 space-y-4 w-full max-w-sm">
+        <div className="flex items-center justify-between">
+          <div className="font-semibold text-slate-800">Table {table.number}</div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700">
+            <X size={16} />
+          </button>
+        </div>
+        <div>
+          <div className="text-xs font-semibold text-slate-500 mb-1">Table details</div>
+          {infoRow("Table number", table.number)}
+          {infoRow("Capacity", `${table.capacity} pax`)}
+          {infoRow("Status", table.status === "occupied" ? "Occupied" : "Available")}
+          {infoRow("Area", table.zone || "Unassigned")}
+          {infoRow("Assigned server", assignedServer ? `${assignedServer.initials} — ${assignedServer.name}` : "Unassigned")}
+          {infoRow("Guest count", table.partySize ? `${table.partySize} guests` : "Not recorded")}
+          {infoRow("Celebration / highlight", table.guestHighlight ? (table.guestHighlight === "custom" ? (table.customHighlightLabel || "Custom") : highlight.label) : "None")}
+        </div>
+        {table.serverNotes && (
+          <div>
+            <div className="text-xs font-semibold text-slate-500 mb-1">Operational note</div>
+            <p className="text-sm text-slate-700 whitespace-pre-wrap">{table.serverNotes}</p>
+          </div>
+        )}
       </div>
     );
+  }
+
+  // ---------- Server view: read-only table info, editable status/name only ----------
+  if (!permissions.canEditLayout) {
     return (
       <div className="border border-slate-300 rounded-xl bg-white shadow-lg p-4 space-y-4 w-full max-w-sm">
         <div className="flex items-center justify-between">
@@ -1441,6 +1480,9 @@ function FloorPlanCanvas({
   panPosition,
   onPanChange,
   onViewportChange,
+  isHighlightActive = false,
+  highlightTableIds,
+  highlightAreaIds,
 }) {
   const { canvasWidth, canvasHeight, minZoom, maxZoom, defaultZoom } = layoutConfig;
 
@@ -1606,6 +1648,7 @@ function FloorPlanCanvas({
                 onRequestCanvasExpand={onRequestCanvasExpand}
                 onBeginInteraction={onBeginAreaInteraction}
                 displaySettings={displaySettings}
+                isHighlighted={isHighlightActive && highlightAreaIds?.includes(area.id)}
               />
             ))}
 
@@ -1631,6 +1674,8 @@ function FloorPlanCanvas({
                   onRequestCanvasExpand={onRequestCanvasExpand}
                   onBeginMove={onBeginTableMove}
                   onEndMove={onEndTableMove}
+                  isHighlighted={isHighlightActive && highlightTableIds?.has(table.id)}
+                  isDimmed={isHighlightActive && !highlightTableIds?.has(table.id)}
                 />
               ))}
             {selectionBox && (
@@ -1705,7 +1750,7 @@ function ServerPanel({ servers, onAdd, onRemove, canManage }) {
 
 // ---------- group panel ----------
 
-function GroupPanel({ groups, tables, onAdd, onRemove, canManage }) {
+function GroupPanel({ groups, tables, onAdd, onRemove, canManage, highlightedGroupId, onToggleHighlight }) {
   const [name, setName] = useState("");
   const [color, setColor] = useState(SWATCHES[1]);
 
@@ -1718,17 +1763,24 @@ function GroupPanel({ groups, tables, onAdd, onRemove, canManage }) {
   return (
     <div className="border border-slate-200 rounded-xl p-3 space-y-2">
       <div className="text-sm font-semibold text-slate-700">Groups</div>
+      <p className="text-xs text-slate-400 -mt-1">Click a group to highlight its tables on the floor. Click again to clear.</p>
       <div className="flex flex-wrap gap-2">
         {groups.map((g) => {
           const count = tables.filter((t) => t.groupId === g.id).length;
+          const isHighlighted = highlightedGroupId === g.id;
           return (
-            <span key={g.id} className="flex items-center gap-1.5 text-xs bg-slate-100 rounded-full pl-2 pr-1 py-1">
+            <button
+              type="button"
+              key={g.id}
+              onClick={() => onToggleHighlight?.(g.id)}
+              className={`flex items-center gap-1.5 text-xs rounded-full pl-2 pr-1 py-1 border ${isHighlighted ? "group-chip-active" : "bg-slate-100 border-transparent"}`}
+            >
               <ColorDot color={g.color} />
               {g.name} ({count})
-              <LockedButton allowed={canManage} onClick={() => onRemove(g.id)} className="text-slate-400 hover:text-red-500 ml-1">
+              <LockedButton allowed={canManage} onClick={(event) => { event.stopPropagation(); onRemove(g.id); }} className="text-slate-400 hover:text-red-500 ml-1">
                 <X size={11} />
               </LockedButton>
-            </span>
+            </button>
           );
         })}
         {groups.length === 0 && <span className="text-xs text-slate-400">No groups yet.</span>}
@@ -1921,6 +1973,10 @@ const [staffingDate, setStaffingDate] = useState(getHawaiiDateString);
 const [staffingAssignments, setStaffingAssignments] = useState({});
 const [staffingSaveState, setStaffingSaveState] = useState("idle");
 const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(initialRestaurants.map((restaurant) => [restaurant.id, { dataUrl: null, opacity: 0.35, visible: true }])));
+const [tableHighlightMode, setTableHighlightMode] = useState("mine");
+const [highlightEmployeeUid, setHighlightEmployeeUid] = useState(null);
+const [highlightedGroupId, setHighlightedGroupId] = useState(null);
+const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
 
   useEffect(() => {
     window.localStorage.setItem("pcc-layout-locks-v14.3", JSON.stringify(layoutLocksByR));
@@ -1932,6 +1988,11 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(init
 
   // ---------- authenticated roles & server-enforced venue access ----------
   const currentRole = authSession.profile.role;
+  // v18.1: this is the limited-employee cohort. They get read-only Seating access
+  // (view + My Tables highlighting) plus whatever Operations sections their role
+  // grants in DailyOperationsHub's sectionAccess — never seating-layout writes.
+  const operationsOnlyRoles = ["dessert", "gelato", "line", "inventory", "operations_server", "employee"];
+  const isOperationsOnly = operationsOnlyRoles.includes(currentRole);
   const isLeadOrAdmin = ["lead", "admin", "developer", "director", "manager", "assistant_manager", "front_lead", "back_lead"].includes(currentRole);
   const authorizedVenueIds = useMemo(
     () =>
@@ -1974,8 +2035,9 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(init
   const permissions = {
     canViewFloorPlan: true,
     canViewTableDetails: true,
-    canUpdateStatus: true,
-    canEditGuestName: true,
+    canUpdateStatus: !isOperationsOnly,
+    canEditGuestName: !isOperationsOnly,
+    canOpenTableContextMenu: !isOperationsOnly,
 
     canEditLayout: isLeadOrAdmin && !layoutLocked,
     canMoveTables: isLeadOrAdmin && !layoutLocked,
@@ -1989,6 +2051,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(init
     canUseBulkGenerator: isLeadOrAdmin && !layoutLocked,
     canEditRestaurantSetup: isLeadOrAdmin && !layoutLocked,
     canManageStaffing: ["lead", "admin", "developer", "director", "manager", "assistant_manager", "front_lead", "back_lead"].includes(currentRole),
+    canUseDailyOperations: true,
   };
 
   const [canvasSettingsByR, setCanvasSettingsByR] = useState(() =>
@@ -2071,6 +2134,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(init
   const [fullFloorToolsOpen, setFullFloorToolsOpen] = useState(false);
   const [fullFloorInspectorOpen, setFullFloorInspectorOpen] = useState(false);
   const [tableContextMenu, setTableContextMenu] = useState(null);
+  const [contextAssignOpen, setContextAssignOpen] = useState(false);
   const [combineSourceId, setCombineSourceId] = useState(null);
   const canvasViewportRef = useRef({ scrollLeft: 0, scrollTop: 0, width: 900, height: 600 });
   const [greeterView, setGreeterView] = useState(false);
@@ -2089,6 +2153,10 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(init
 
   const tableClipboardRef = useRef([]);
   const [activeTool, setActiveTool] = useState("tables");
+  // v18.1: everyone (including the limited employee cohort) now lands on the
+  // read-only Seating view first, so assigned tables are visible within seconds
+  // of logging in. Operations remains one tab away for roles that need it.
+  const [appModule, setAppModule] = useState("seating");
   const [quickTableType, setQuickTableType] = useState("regular");
   const [customQuickCapacity, setCustomQuickCapacity] = useState(16);
   const [historyByR, setHistoryByR] = useState(() => Object.fromEntries(initialRestaurants.map((r) => [r.id, []])));
@@ -2320,6 +2388,78 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(init
   const activeVenueActivity = useMemo(() => activity.filter((event) => event.venueId === activeRid).slice(0, 60), [activity, activeRid]);
   const selectedArea = areas.find((area) => area.id === selectedAreaId) || null;
 
+  // ---------- v18.1 My Tables / My Area highlighting ----------
+  // Reuses the existing live staffingAssignments subscription (no new listener):
+  // when a manager edits an assignment, this recomputes immediately.
+  const myAssignmentEntry = useMemo(() => {
+    const uid = authSession.user?.uid;
+    if (!uid) return null;
+    return Object.entries(staffingAssignments || {}).find(
+      ([, value]) => value?.active !== false && value?.employeeUid === uid
+    ) || null;
+  }, [staffingAssignments, authSession.user]);
+
+  const highlightAssignmentEntry = useMemo(() => {
+    if (highlightEmployeeUid) {
+      return Object.entries(staffingAssignments || {}).find(
+        ([, value]) => value?.active !== false && value?.employeeUid === highlightEmployeeUid
+      ) || null;
+    }
+    return isOperationsOnly ? myAssignmentEntry : null;
+  }, [highlightEmployeeUid, staffingAssignments, myAssignmentEntry, isOperationsOnly]);
+
+  const highlightAssignment = highlightAssignmentEntry?.[1] || null;
+  const highlightAreaIds = useMemo(() => highlightAssignment?.assignedAreaIds || [], [highlightAssignment]);
+  const highlightDirectTableIds = useMemo(() => new Set(highlightAssignment?.assignedTableIds || []), [highlightAssignment]);
+  const highlightAreaTableIds = useMemo(() => {
+    if (!highlightAreaIds.length) return new Set();
+    return new Set(
+      tables
+        .filter((table) => highlightAreaIds.includes(table.areaId) || highlightAreaIds.includes(table.zone))
+        .map((table) => table.id)
+    );
+  }, [tables, highlightAreaIds]);
+
+  const isHighlightActive = Boolean(highlightAssignment) && tableHighlightMode !== "full";
+  const activeHighlightTableIds = tableHighlightMode === "area" ? highlightAreaTableIds : highlightDirectTableIds;
+
+  const highlightSummary = useMemo(() => {
+    if (!highlightAssignment) return null;
+    const idSet = tableHighlightMode === "area" ? highlightAreaTableIds : highlightDirectTableIds;
+    const highlightedTables = tables.filter((table) => idSet.has(table.id));
+    return {
+      employeeName: highlightAssignment.displayName || "Employee",
+      position: highlightAssignment.position || highlightAssignment.assignment || "Unassigned position",
+      areaLabel: areas.filter((area) => highlightAreaIds.includes(area.id)).map((area) => area.label).join(", ") || "No area assigned",
+      tableCount: highlightedTables.length,
+      totalSeats: highlightedTables.reduce((sum, table) => sum + (Number(table.capacity) || 0), 0),
+      availableCount: highlightedTables.filter((table) => table.status !== "occupied").length,
+      occupiedCount: highlightedTables.filter((table) => table.status === "occupied").length,
+      isOwn: !highlightEmployeeUid,
+    };
+  }, [highlightAssignment, tableHighlightMode, highlightAreaTableIds, highlightDirectTableIds, tables, areas, highlightAreaIds, highlightEmployeeUid]);
+
+  const clearHighlight = useCallback(() => {
+    setHighlightEmployeeUid(null);
+    setTableHighlightMode(isOperationsOnly ? "mine" : "full");
+  }, [isOperationsOnly]);
+
+  // ---------- Group-based highlighting (Groups tab: click a name to glow its tables) ----------
+  const highlightedGroup = groups.find((group) => group.id === highlightedGroupId) || null;
+  const groupHighlightTableIds = useMemo(() => {
+    if (!highlightedGroup) return null;
+    return new Set(tables.filter((table) => table.groupId === highlightedGroup.id).map((table) => table.id));
+  }, [tables, highlightedGroup]);
+  const toggleGroupHighlight = useCallback((groupId) => {
+    setHighlightedGroupId((previous) => (previous === groupId ? null : groupId));
+  }, []);
+  useEffect(() => { setHighlightedGroupId(null); }, [activeRid]);
+
+  // Group highlight takes priority when active; otherwise fall back to the
+  // assignment-based highlight (My Tables / manager preview).
+  const canvasHighlightActive = Boolean(groupHighlightTableIds) || isHighlightActive;
+  const canvasHighlightTableIds = groupHighlightTableIds || activeHighlightTableIds;
+
   const captureVenueSnapshot = useCallback(() => ({
     tables: structuredClone(tablesByR[activeRid] || []),
     areas: structuredClone(areasByR[activeRid] || []),
@@ -2544,7 +2684,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(init
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") { event.preventDefault(); pasteSelectedTables(); }
       if (event.key === "Escape") { clearTableSelection(); setBulkSelectMode(false); }
       if ((event.key === "Delete" || event.key === "Backspace") && selectedTableIds.length) { event.preventDefault(); deleteSelectedTables(); }
-      if (selectedTableIds.length && ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) {
+      if (permissions.canMoveTables && selectedTableIds.length && ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) {
         event.preventDefault();
         const step = event.shiftKey ? 20 : 5;
         const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
@@ -2557,7 +2697,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(init
       }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  }, [undo, redo, selectAllTables, clearTableSelection, deleteSelectedTables, selectedTableIds, pushHistory, setTables, copySelectedTables, pasteSelectedTables]);
+  }, [undo, redo, selectAllTables, clearTableSelection, deleteSelectedTables, selectedTableIds, pushHistory, setTables, copySelectedTables, pasteSelectedTables, permissions.canMoveTables]);
 
   useEffect(() => {
     if (!safeSnapshotRef.current) safeSnapshotRef.current = captureVenueSnapshot();
@@ -2568,9 +2708,15 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(init
   // that calls it (section 3).
   const updateTable = (id, patch) => {
     pushHistory();
+    const statusKeys = ["status", "showTableNumber", "showServerInitials"];
+    const guestKeys = ["guestName", "guestInitials", "partySize", "showGuestName", "showGuestInitials", "guestHighlight", "customHighlightLabel", "celebrationMessage", "serverNotes"];
+    const editableKeys = [
+      ...(permissions.canUpdateStatus ? statusKeys : []),
+      ...(permissions.canEditGuestName ? guestKeys : []),
+    ];
     const allowedKeys = permissions.canEditLayout
       ? Object.keys(patch)
-      : Object.keys(patch).filter((key) => ["status", "guestName", "guestInitials", "partySize", "showTableNumber", "showServerInitials", "showGuestName", "showGuestInitials", "guestHighlight", "customHighlightLabel", "celebrationMessage", "serverNotes"].includes(key));
+      : Object.keys(patch).filter((key) => editableKeys.includes(key));
     if (allowedKeys.length === 0) return;
 
     const currentTable = tables.find((table) => table.id === id);
@@ -2916,6 +3062,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(init
   }, [permissions.canManageTables, pushHistory, setTables, tables]);
 
   const openTableContextMenu = useCallback((tableId, point) => {
+    if (!permissions.canOpenTableContextMenu) return;
     const table = tables.find((item) => item.id === tableId);
     if (!table) return;
     setSelectedTableId(tableId); setSelectedTableIds([tableId]);
@@ -2923,7 +3070,7 @@ const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(init
     const x = Math.max(8, Math.min((point?.x || 20), window.innerWidth - width - 8));
     const y = Math.max(8, Math.min((point?.y || 20), window.innerHeight - height - 8));
     setTableContextMenu({ tableId, x, y });
-  }, [tables]);
+  }, [tables, permissions.canOpenTableContextMenu]);
 
   const startCombineWith = useCallback((id) => {
     setCombineSourceId(id);
@@ -3462,6 +3609,34 @@ const toggleAreaEditMode = useCallback(() => {
     }
   };
 
+  const copyYesterdayStaffing = async () => {
+    if (!permissions.canManageStaffing) return;
+    const previousDate = new Date(`${staffingDate}T12:00:00`);
+    previousDate.setDate(previousDate.getDate() - 1);
+    const yesterday = previousDate.toISOString().slice(0, 10);
+    try {
+      const previous = await fetchVenueStaffing(activeRid, yesterday);
+      const previousAssignments = previous?.assignments || {};
+      if (Object.keys(previousAssignments).length === 0) {
+        await showAlert("Nothing to copy", `No assignments were found for ${yesterday}.`, { tone: "warning" });
+        return;
+      }
+      if (Object.keys(staffingAssignments).length > 0) {
+        const confirmed = await showConfirm(
+          "Replace today's assignments?",
+          `Copying yesterday's assignments will replace the ${Object.keys(staffingAssignments).length} assignment(s) already on today's list.`,
+          { tone: "warning", confirmLabel: "Copy and replace" }
+        );
+        if (!confirmed) return;
+      }
+      setStaffingAssignments(structuredClone(previousAssignments));
+      setStaffingSaveState("dirty");
+    } catch (error) {
+      console.error("Unable to copy yesterday's staffing:", error);
+      await showAlert("Copy failed", "Unable to load yesterday's assignments. Check your connection and try again.", { tone: "danger" });
+    }
+  };
+
   const createVenueCanvas = useCallback(({ name, width, height, mode, sourceId }) => {
     if (currentRole !== "developer") return;
     const baseId = name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "venue";
@@ -3495,7 +3670,16 @@ const toggleAreaEditMode = useCallback(() => {
     return () => { window.removeEventListener("keydown", closeMenus); window.removeEventListener("pointerdown", dismiss); };
   }, []);
 
-  const toolTabs = [
+  useEffect(() => { if (!tableContextMenu) setContextAssignOpen(false); }, [tableContextMenu]);
+
+  const assignTableToGroup = useCallback((tableId, groupId) => {
+    if (!permissions.canManageTables) return;
+    pushHistory();
+    setTables((previous) => previous.map((table) => (table.id === tableId ? { ...table, groupId } : table)));
+  }, [permissions.canManageTables, pushHistory, setTables]);
+
+
+  const allToolTabs = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "tables", label: "Tables", icon: Plus },
     { id: "servers", label: "Servers", icon: Users },
@@ -3510,11 +3694,14 @@ const toggleAreaEditMode = useCallback(() => {
     { id: "layout", label: "Layout", icon: Maximize2 },
     { id: "display", label: "Display", icon: Eye },
   ];
+  const toolTabs = isOperationsOnly
+    ? allToolTabs.filter((tab) => tab.id === "help")
+    : allToolTabs;
 
   return (
     <div className={`workspace-app ${mobileFocusMode ? "mobile-focus-mode" : ""} ${greeterView ? "greeter-view-active" : ""} ${headerCollapsed ? "header-collapsed" : ""}`}>
       {!mobileFocusMode && <AppHeader
-        title={`${layoutConfigByR[activeRid].name} Seating Layout`}
+        title={appModule === "operations" ? "Dining Operations" : `${layoutConfigByR[activeRid].name} Seating Layout`}
         instructions={instructions}
         saveLabel={saveLabel}
         saveDotClass={saveDotClass}
@@ -3542,6 +3729,65 @@ const toggleAreaEditMode = useCallback(() => {
         onCreateVenue={() => setVenueManagerOpen(true)}
       />}
 
+      {!mobileFocusMode && !operationsView && !greeterView && (
+        <nav className="platform-module-nav" aria-label="Application workspaces">
+          <div className="platform-brand">
+            <span>MEʻA HOʻOKIPA</span>
+            <strong>Dining Operations</strong>
+          </div>
+          <div className="platform-module-tabs">
+            <button type="button" className={appModule === "seating" ? "active" : ""} onClick={() => setAppModule("seating")}>
+              <Grid3X3 size={17}/> Seating
+            </button>
+            <button type="button" className={appModule === "operations" ? "active" : ""} onClick={() => setAppModule("operations")}>
+              <PackageOpen size={17}/> Operations
+            </button>
+            <button type="button" disabled title="Coming in a future release"><CircleHelp size={17}/> Training <span className="module-soon">Soon</span></button>
+            <button type="button" disabled title="Coming in a future release"><Activity size={17}/> Reports <span className="module-soon">Soon</span></button>
+          </div>
+        </nav>
+      )}
+
+      {appModule === "seating" && !mobileFocusMode && !greeterView && (isOperationsOnly || highlightAssignment) && (
+        <MyTablesBar
+          summary={highlightSummary}
+          mode={tableHighlightMode}
+          onModeChange={setTableHighlightMode}
+          onClear={clearHighlight}
+          showClear={Boolean(highlightEmployeeUid)}
+        />
+      )}
+
+      {appModule === "operations" && !mobileFocusMode && !greeterView ? (
+        <main className="operations-workspace-shell">
+          <header className="operations-workspace-header">
+            <div>
+              <span className="ops-eyebrow">Daily operations workspace</span>
+              <h1>{layoutConfig.name}</h1>
+              <p>Assignments, inventory counts, frozen desserts, pax preparation, and daily history in one focused workspace.</p>
+            </div>
+            <button type="button" className="return-to-seating-button" onClick={() => setAppModule("seating")}>
+              <ChevronRight size={17}/> Back to seating
+            </button>
+          </header>
+          <DailyOperationsHub
+            venueId={activeRid}
+            venueName={layoutConfig.name}
+            role={currentRole}
+            profile={{ ...authSession.profile, uid: authSession.user.uid }}
+            tables={tables}
+            staffingDate={staffingDate}
+            onDateChange={setStaffingDate}
+            staffingAssignments={staffingAssignments}
+            onChangeAssignment={updateStaffingAssignment}
+            onSaveStaffing={saveStaffing}
+            staffingSaveState={staffingSaveState}
+            canManageStaffing={permissions.canManageStaffing}
+            showAlert={showAlert}
+            showConfirm={showConfirm}
+          />
+        </main>
+      ) : (
       <main className={`workspace-main ${sidebarCollapsed || operationsView || mobileFocusMode || greeterView ? "sidebar-collapsed" : ""} ${inspectorCollapsed || operationsView || mobileFocusMode || greeterView ? "inspector-collapsed" : ""} ${operationsView || mobileFocusMode ? "operations-view" : ""}`}>
         {!operationsView && !mobileFocusMode && !greeterView && !sidebarCollapsed && <ToolSidebar
           tabs={toolTabs}
@@ -3561,6 +3807,9 @@ const toggleAreaEditMode = useCallback(() => {
               onOpenVenue={(venueId) => { setActiveRid(venueId); setActiveTool("tables"); }}
             />
           )}
+
+
+
 
           {activeTool === "tables" && (
             <div className="workspace-tool-content">
@@ -3656,6 +3905,8 @@ const toggleAreaEditMode = useCallback(() => {
               onAdd={addGroup}
               onRemove={removeGroup}
               canManage={permissions.canManageGroups}
+              highlightedGroupId={highlightedGroupId}
+              onToggleHighlight={toggleGroupHighlight}
             />
           )}
 
@@ -3738,6 +3989,9 @@ const toggleAreaEditMode = useCallback(() => {
               onSave={saveStaffing}
               canManage={permissions.canManageStaffing}
               saveState={staffingSaveState}
+              areas={areas}
+              tables={tables}
+              onCopyYesterday={copyYesterdayStaffing}
             />
           )}
 
@@ -3791,6 +4045,7 @@ const toggleAreaEditMode = useCallback(() => {
             {!mobileFocusMode && !greeterView && <button type="button" onClick={() => { if (operationsView) setFullFloorInspectorOpen((value) => !value); else setInspectorCollapsed((value) => !value); }} title="Show or hide inspector">{inspectorCollapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />} <span>Inspector</span></button>}
             {!mobileFocusMode && !greeterView && <button type="button" className={headerCollapsed ? "active" : ""} onClick={() => setHeaderCollapsed((value) => !value)} title="Minimize or restore header">{headerCollapsed ? <ChevronDown size={16}/> : <ChevronUp size={16}/>}<span>{headerCollapsed ? "Show header" : "Minimize header"}</span></button>}
             {!greeterView && <button type="button" className={showOccupancyWidget ? "active" : ""} onClick={() => setShowOccupancyWidget((value) => !value)} title="Show or hide occupancy summary"><Gauge size={16}/><span>{showOccupancyWidget ? "Hide summary" : "Show summary"}</span></button>}
+            {!greeterView && <button type="button" className={serversDashboardOpen ? "active" : ""} onClick={() => setServersDashboardOpen((value) => !value)} title="Show or hide the servers dashboard"><Users size={16}/><span>{serversDashboardOpen ? "Hide servers" : "Servers"}</span></button>}
             {!greeterView && <button type="button" className={mobileFocusMode ? "active" : ""} onClick={() => setMobileFocusMode((value) => !value)} title="Phone and tablet map mode"><Smartphone size={16}/><span>{mobileFocusMode ? "Show controls" : "Mobile map"}</span></button>}
             {activeRid === "gateway" && <button type="button" className={greeterView ? "active" : ""} onClick={() => setGreeterView((value) => !value)} title="Gateway greeter dashboard"><LayoutDashboard size={16}/><span>{greeterView ? "Floor map" : "Greeter"}</span></button>}
             {!mobileFocusMode && !greeterView && <button type="button" className={operationsView ? "active" : ""} onClick={() => setOperationsView((value) => { const next = !value; if (next) { setFullFloorToolsOpen(false); setFullFloorInspectorOpen(Boolean(selectedTableId)); } return next; })} title="Large floor operations view">{operationsView ? <Minimize2 size={16} /> : <Maximize2 size={16} />} <span>{operationsView ? "Exit focus" : "Full floor"}</span></button>}
@@ -3827,6 +4082,29 @@ const toggleAreaEditMode = useCallback(() => {
               <div className="occupancy-progress"><span style={{width: `${percent}%`}}/></div>
             </section>;
           })()}
+          {serversDashboardOpen && (
+            <section className="servers-dashboard" aria-label="Servers dashboard">
+              <div className="servers-dashboard-title">
+                <span>Servers</span>
+                <button type="button" onClick={() => setServersDashboardOpen(false)} title="Close servers dashboard"><X size={14}/></button>
+              </div>
+              <p>Tap a name to glow their tables on the floor. Tap again to clear.</p>
+              <div className="servers-dashboard-list">
+                {groups.map((group) => {
+                  const count = tables.filter((table) => table.groupId === group.id).length;
+                  const active = highlightedGroupId === group.id;
+                  return (
+                    <button type="button" key={group.id} className={`servers-dashboard-row ${active ? "active" : ""}`} onClick={() => toggleGroupHighlight(group.id)}>
+                      <ColorDot color={group.color} />
+                      <span>{group.name}</span>
+                      <strong>{count}</strong>
+                    </button>
+                  );
+                })}
+                {groups.length === 0 && <div className="ops-empty">No servers set up yet. Add them from Tools → Groups.</div>}
+              </div>
+            </section>
+          )}
           <FloorPlanCanvas
             layoutConfig={layoutConfig}
             areas={areas}
@@ -3868,6 +4146,9 @@ const toggleAreaEditMode = useCallback(() => {
             panPosition={displaySettings.pan}
             onPanChange={(pan) => updateViewSettings({ pan })}
             onViewportChange={(viewport) => { canvasViewportRef.current = viewport; }}
+            isHighlightActive={canvasHighlightActive}
+            highlightTableIds={canvasHighlightTableIds}
+            highlightAreaIds={highlightAreaIds}
           />
           </>}
           {(mobileFocusMode || operationsView) && <>
@@ -3934,10 +4215,13 @@ const toggleAreaEditMode = useCallback(() => {
           )}
         </InspectorPanel>}
       </main>
+      )}
 
-      {combineSourceId && <div className="combine-mode-banner"><Combine size={16}/><span>Select another table to combine with Table {tables.find((table) => table.id === combineSourceId)?.number || ""}</span><button type="button" onClick={() => setCombineSourceId(null)}>Cancel</button></div>}
+      {appModule === "seating" && combineSourceId && <div className="combine-mode-banner"><Combine size={16}/><span>Select another table to combine with Table {tables.find((table) => table.id === combineSourceId)?.number || ""}</span><button type="button" onClick={() => setCombineSourceId(null)}>Cancel</button></div>}
 
-      {tableContextMenu && selectedTable && <div className="table-context-menu" style={{ left: tableContextMenu.x, top: tableContextMenu.y }} role="menu" onPointerDown={(event) => event.stopPropagation()}>
+      {appModule === "seating" && highlightedGroup && <div className="combine-mode-banner group-highlight-banner"><ColorDot color={highlightedGroup.color}/><span>Highlighting <strong>{highlightedGroup.name}</strong> · {groupHighlightTableIds?.size || 0} table{groupHighlightTableIds?.size === 1 ? "" : "s"}</span><button type="button" onClick={() => setHighlightedGroupId(null)}>Clear</button></div>}
+
+      {appModule === "seating" && tableContextMenu && selectedTable && <div className="table-context-menu" style={{ left: tableContextMenu.x, top: tableContextMenu.y }} role="menu" onPointerDown={(event) => event.stopPropagation()}>
         <div className="table-context-header"><div><strong>Table {selectedTable.number}</strong><span>{selectedTable.capacity} seats</span></div><button type="button" onClick={() => setTableContextMenu(null)}><X size={16}/></button></div>
         <button type="button" onClick={() => { toggleTableStatus(selectedTable.id); setTableContextMenu(null); }}>{selectedTable.status === "occupied" ? "Mark Available" : "Mark Occupied"}</button>
         <div className="context-capacity-row"><button type="button" onClick={() => changeTableCapacity(selectedTable.id, Number(selectedTable.capacity)-2)}><Minus size={14}/> 2</button><strong>{selectedTable.capacity} seats</strong><button type="button" onClick={() => changeTableCapacity(selectedTable.id, Number(selectedTable.capacity)+2)}><Plus size={14}/> 2</button></div>
@@ -3946,6 +4230,24 @@ const toggleAreaEditMode = useCallback(() => {
         {permissions.canSplitTables && <button type="button" disabled={Boolean(selectedTable.parentId) || Boolean(selectedTable.childIds?.length) || selectedTable.isTableGroup} onClick={() => { setTableContextMenu(null); if (operationsView) setFullFloorInspectorOpen(true); else setMobileInspectorOpen(true); requestAnimationFrame(() => document.querySelector('.full-floor-inspector-drawer .split-this-table-button, .mobile-table-inspector .split-this-table-button, .workspace-inspector .split-this-table-button')?.click()); }}><Scissors size={15}/> Split Table</button>}
         {permissions.canManageTables && <button type="button" onClick={() => startCombineWith(selectedTable.id)}><Combine size={15}/> Combine With…</button>}
         {permissions.canManageTables && <button type="button" onClick={() => { duplicateTable(selectedTable.id); setTableContextMenu(null); }}><Copy size={15}/> Duplicate</button>}
+        {permissions.canManageTables && (
+          <>
+            <button type="button" onClick={() => setContextAssignOpen((value) => !value)}>
+              <Users size={15}/> Assign to Server {contextAssignOpen ? <ChevronUp size={13}/> : <ChevronDown size={13}/>}
+            </button>
+            {contextAssignOpen && (
+              <div className="context-assign-list">
+                <button type="button" className={!selectedTable.groupId ? "active" : ""} onClick={() => { assignTableToGroup(selectedTable.id, null); setTableContextMenu(null); }}>Unassigned</button>
+                {groups.map((group) => (
+                  <button type="button" key={group.id} className={selectedTable.groupId === group.id ? "active" : ""} onClick={() => { assignTableToGroup(selectedTable.id, group.id); setTableContextMenu(null); }}>
+                    <ColorDot color={group.color} /> {group.name}
+                  </button>
+                ))}
+                {groups.length === 0 && <div className="ops-empty">No servers yet — add them in Tools → Groups.</div>}
+              </div>
+            )}
+          </>
+        )}
         {permissions.canDeleteTables && <button type="button" className="context-danger" onClick={() => { const id=selectedTable.id; setTableContextMenu(null); deleteTable(id); }}><Trash2 size={15}/> Delete Table</button>}
       </div>}
 
@@ -3961,7 +4263,7 @@ const toggleAreaEditMode = useCallback(() => {
       <VenueCanvasManager open={venueManagerOpen} restaurants={restaurants} layoutConfig={layoutConfigByR} onClose={() => setVenueManagerOpen(false)} onCreate={createVenueCanvas} />
       <ActionDialog dialog={actionDialog} onResolve={resolveDialog} />
 
-      {!mobileFocusMode && !greeterView && <WorkspaceFooter
+      {appModule === "seating" && !mobileFocusMode && !greeterView && <WorkspaceFooter
         legend={<SeatingLegend />}
         zoom={zoom}
         onZoomOut={zoomOut}

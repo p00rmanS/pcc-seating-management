@@ -27,6 +27,13 @@ const SUPPORTED_ROLES = [
   "server",
   "lead",
   "admin",
+  "dessert",
+  "gelato",
+  "line",
+  "inventory",
+  "operations_server",
+  "back_lead",
+  "employee",
 ];
 
 
