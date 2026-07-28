@@ -88,9 +88,14 @@ import {
 
 // ---------- constants ----------
 
+// Expanded for venues staffing 8-20+ servers at once — spans the full hue
+// wheel plus darker variants so every server/group chip stays distinguishable.
 const SWATCHES = [
-  "#3b82f6", "#8b5cf6", "#ec4899", "#f97316",
-  "#22c55e", "#ef4444", "#eab308", "#14b8a6",
+  "#ef4444", "#f97316", "#f59e0b", "#eab308", "#84cc16",
+  "#22c55e", "#10b981", "#14b8a6", "#06b6d4", "#0ea5e9",
+  "#3b82f6", "#6366f1", "#8b5cf6", "#a855f7", "#d946ef",
+  "#ec4899", "#f43f5e",
+  "#7f1d1d", "#78350f", "#365314", "#164e63", "#1e3a8a", "#581c87", "#831843",
 ];
 
 const GUEST_HIGHLIGHT_OPTIONS = [
@@ -305,7 +310,7 @@ function ColorDot({ color, size = 10 }) {
 
 function SwatchPicker({ value, onChange, allowNone = true }) {
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap gap-1.5 max-w-56">
       {allowNone && (
         <button
           onClick={() => onChange(null)}
@@ -554,6 +559,7 @@ function BlueprintOverlay({ blueprint, canvasWidth, canvasHeight, editMode, zoom
   const height = blueprint.height || canvasHeight;
   const x = blueprint.x || 0;
   const y = blueprint.y || 0;
+  const rotate = blueprint.rotate || 0;
 
   const beginInteraction = (event, mode) => {
     if (!editMode) return;
@@ -577,6 +583,15 @@ function BlueprintOverlay({ blueprint, canvasWidth, canvasHeight, editMode, zoom
       const nextHeight = Math.max(120, interaction.origH + dy);
       onRequestCanvasExpand?.(x + nextWidth + 400, y + nextHeight + 400);
       onChange({ width: nextWidth, height: nextHeight });
+    } else if (interaction.mode === "rotate") {
+      const centerX = interaction.origX + interaction.origW / 2;
+      const centerY = interaction.origY + interaction.origH / 2;
+      const canvasRect = event.currentTarget.closest(".floor-canvas")?.getBoundingClientRect();
+      if (!canvasRect) return;
+      const pointerX = (event.clientX - canvasRect.left) / zoom;
+      const pointerY = (event.clientY - canvasRect.top) / zoom;
+      const nextRotate = Math.atan2(pointerY - centerY, pointerX - centerX) * (180 / Math.PI) + 90;
+      onChange({ rotate: Math.round(nextRotate) });
     }
   };
   const endInteraction = (event) => {
@@ -587,25 +602,40 @@ function BlueprintOverlay({ blueprint, canvasWidth, canvasHeight, editMode, zoom
   return (
     <div
       className={`blueprint-overlay-wrap ${editMode ? "blueprint-edit-active" : ""}`}
-      style={{ position: "absolute", left: x, top: y, width, height, zIndex: 1 }}
+      style={{ position: "absolute", left: x, top: y, width, height, zIndex: 1, transform: rotate ? `rotate(${rotate}deg)` : undefined }}
       onPointerDown={(event) => beginInteraction(event, "move")}
       onPointerMove={handleMove}
       onPointerUp={endInteraction}
       onPointerCancel={endInteraction}
-      title={editMode ? "Drag to move · drag the handle to resize" : undefined}
+      title={editMode ? "Drag to move · drag the corner handle to resize · drag the top handle to rotate" : undefined}
     >
       <img className="venue-blueprint-overlay" src={blueprint.dataUrl} alt="Imported venue blueprint" style={{ opacity: blueprint.opacity ?? 0.35 }} draggable="false" />
       {editMode && (
-        <button
-          type="button"
-          className="blueprint-resize-handle"
-          aria-label="Resize blueprint"
-          onPointerDown={(event) => beginInteraction(event, "resize")}
-          onPointerMove={handleMove}
-          onPointerUp={endInteraction}
-        >
-          <Maximize2 size={11} />
-        </button>
+        <>
+          <button
+            type="button"
+            className="blueprint-rotate-handle"
+            aria-label="Rotate blueprint"
+            title="Drag to rotate"
+            onPointerDown={(event) => beginInteraction(event, "rotate")}
+            onPointerMove={handleMove}
+            onPointerUp={endInteraction}
+            onPointerCancel={endInteraction}
+          >
+            <RotateCw size={11} />
+          </button>
+          <button
+            type="button"
+            className="blueprint-resize-handle"
+            aria-label="Resize blueprint"
+            onPointerDown={(event) => beginInteraction(event, "resize")}
+            onPointerMove={handleMove}
+            onPointerUp={endInteraction}
+            onPointerCancel={endInteraction}
+          >
+            <Maximize2 size={11} />
+          </button>
+        </>
       )}
     </div>
   );
@@ -1603,7 +1633,12 @@ function FloorPlanCanvas({
     if (!node) return;
     node.scrollLeft = Number(panPosition?.x) || 0;
     node.scrollTop = Number(panPosition?.y) || 0;
-  }, [layoutConfig.name]);
+    // panPosition itself is intentionally tracked here (not just layoutConfig.name):
+    // the saved pan for a restaurant can arrive from Firebase/local snapshot after
+    // the initial switch-render, and without this the view stays scrolled to a
+    // stale/default position (visually blank on huge canvases like Hale Aloha)
+    // until something else forces a remount.
+  }, [layoutConfig.name, panPosition?.x, panPosition?.y]);
 
   useEffect(() => {
     const node = scrollRef.current;

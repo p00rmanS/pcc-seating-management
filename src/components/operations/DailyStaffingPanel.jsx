@@ -131,6 +131,14 @@ export default function DailyStaffingPanel({
                 <span>Position / role</span>
                 <input disabled={!canManage} value={effectivePosition(row)} placeholder="e.g. Line, Gelato, Floor" onChange={(event) => updatePosition(row, event.target.value)} />
               </label>
+              <label>
+                <span>Opening</span>
+                <input type="time" disabled={!canManage} value={row.opening || ""} onChange={(event) => updateRow(row.id, { opening: event.target.value })} />
+              </label>
+              <label>
+                <span>Closing</span>
+                <input type="time" disabled={!canManage} value={row.closing || ""} onChange={(event) => updateRow(row.id, { closing: event.target.value })} />
+              </label>
             </div>
 
             <div className="staffing-card-section">

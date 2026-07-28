@@ -1,20 +1,30 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  Barcode,
   CalendarDays,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
   ClipboardList,
+  Download,
   Flower2,
+  Gauge,
   IceCreamBowl,
+  LayoutDashboard,
+  Mic,
   Package,
   Plus,
   Save,
+  Search,
   Shirt,
+  ShoppingBasket,
   Trash2,
   Unlock,
-  UsersRound,
+  Upload,
+  WifiOff,
+  X,
+  XCircle,
 } from "lucide-react";
 import {
   saveDailyOperationsRecord,
@@ -75,6 +85,48 @@ const DEFAULT_BREAKOUT = {
     "Plastic Fork", "Plastic Plates", "Butter Continental Chips",
   ],
 };
+const BREAKOUT_LOW_STOCK_THRESHOLD = 5;
+// Canonical unit vocabulary pulled from the venue's real warehouse breakout
+// list (cases, gallons, drums, bag-in-box soda, etc.) — offered as a
+// datalist so staff can pick one or keep typing a custom unit.
+const BREAKOUT_UNIT_OPTIONS = ["CS", "BOX", "BG", "GAL", "EA", "DRUM", "BIB", "PK", "LBS", "CTN"];
+const BREAKOUT_UNIT_SYNONYMS = {
+  case: "CS", cases: "CS", cs: "CS",
+  box: "BOX", boxes: "BOX",
+  bag: "BG", bags: "BG", bg: "BG",
+  gallon: "GAL", gallons: "GAL", gal: "GAL",
+  each: "EA", ea: "EA",
+  drum: "DRUM", drums: "DRUM",
+  bib: "BIB",
+  pack: "PK", packs: "PK", pk: "PK",
+  lb: "LBS", lbs: "LBS", pound: "LBS", pounds: "LBS",
+  carton: "CTN", ctn: "CTN",
+};
+function normalizeBreakoutUnit(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return trimmed;
+  return BREAKOUT_UNIT_SYNONYMS[trimmed.toLowerCase()] || trimmed;
+}
+const BREAKOUT_STATUS_META = {
+  urgent: { label: "Urgent", icon: XCircle },
+  low: { label: "Low stock", icon: AlertTriangle },
+  ok: { label: "OK", icon: CheckCircle2 },
+};
+function getBreakoutStatus(stock, par) {
+  const value = Number(stock) || 0;
+  const parValue = Number.isFinite(Number(par)) ? Number(par) : BREAKOUT_LOW_STOCK_THRESHOLD;
+  if (value <= 0) return "urgent";
+  if (value < parValue) return "low";
+  return "ok";
+}
+function getReorderSuggestion(stock, par) {
+  const value = Number(stock) || 0;
+  const parValue = Number.isFinite(Number(par)) ? Number(par) : BREAKOUT_LOW_STOCK_THRESHOLD;
+  const needed = Math.max(0, parValue - value);
+  if (value <= 0) return { qty: needed, text: `Suggest ordering ${needed} unit${needed === 1 ? "" : "s"} to reach par of ${parValue}` };
+  if (value < parValue) return { qty: needed, text: `Consider ordering ${needed} unit${needed === 1 ? "" : "s"} to reach par` };
+  return { qty: 0, text: "At par level" };
+}
 function slugify(value) {
   return String(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
@@ -92,6 +144,9 @@ function normalizeBreakoutConfig(value) {
       area: item.area || "Other",
       name: item.name || `Item ${index + 1}`,
       code: item.code || "",
+      unit: item.unit ? normalizeBreakoutUnit(item.unit) : "",
+      par: Number.isFinite(Number(item.par)) && Number(item.par) >= 0 ? Number(item.par) : BREAKOUT_LOW_STOCK_THRESHOLD,
+      price: Number.isFinite(Number(item.price)) && Number(item.price) >= 0 ? Number(item.price) : 0,
       active: item.active !== false,
       order: Number.isFinite(item.order) ? item.order : index,
     }))
@@ -126,6 +181,13 @@ function normalizeFlavorConfig(value, fallbackNames) {
     )
     .sort((a, b) => a.order - b.order);
 }
+function sortedTableSizeEntries(breakdown) {
+  return Object.entries(breakdown).sort(([a], [b]) => {
+    if (a === "10+") return 1;
+    if (b === "10+") return -1;
+    return Number(a) - Number(b);
+  });
+}
 function formatDate(value) {
   return new Date(`${value}T12:00:00`).toLocaleDateString("en-US", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
@@ -135,6 +197,97 @@ function shiftDate(value, days) {
   const date = new Date(`${value}T12:00:00`);
   date.setDate(date.getDate() + days);
   return date.toLocaleDateString("en-CA", { timeZone: "Pacific/Honolulu" });
+}
+function formatElapsed(totalSeconds) {
+  const total = Math.max(0, Math.floor(totalSeconds));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+function trendArrowText(current, previous) {
+  if (!previous) return "";
+  const pct = Math.round(((current - previous) / previous) * 100);
+  if (pct === 0) return " (even)";
+  return ` (${pct > 0 ? "+" : ""}${pct}%)`;
+}
+function csvEscape(value) {
+  const str = String(value ?? "");
+  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+function parseCsvRows(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (inQuotes) {
+      if (char === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false;
+      } else field += char;
+    } else if (char === '"') {
+      inQuotes = true;
+    } else if (char === ",") {
+      row.push(field); field = "";
+    } else if (char === "\n" || char === "\r") {
+      if (char === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); field = "";
+      rows.push(row); row = [];
+    } else {
+      field += char;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+function parseBreakoutCost(raw) {
+  const cleaned = String(raw || "").replace(/[^0-9.]/g, "");
+  const value = parseFloat(cleaned);
+  return Number.isFinite(value) ? value : 0;
+}
+// Parses the venue's real warehouse export: 2-3 categories side by side,
+// each a repeating "Item No., Description, UOM, Cost" column group. The
+// category header row tells us where each group starts, so group width
+// doesn't need to be assumed — we read 4 columns from each detected start.
+function parseBreakoutCsvBlocks(text) {
+  const rows = parseCsvRows(text).filter((row) => row.some((cell) => String(cell).trim() !== ""));
+  if (rows.length < 3) return [];
+  const blockStarts = [];
+  rows[0].forEach((cell, index) => {
+    if (String(cell || "").trim()) blockStarts.push({ start: index, area: String(cell).trim() });
+  });
+  if (!blockStarts.length) return [];
+  const items = [];
+  for (let r = 2; r < rows.length; r++) {
+    const row = rows[r];
+    blockStarts.forEach(({ start, area }) => {
+      const code = String(row[start] || "").trim();
+      const name = String(row[start + 1] || "").trim();
+      const unit = String(row[start + 2] || "").trim();
+      if (!name) return;
+      items.push({ area, code, name, unit: normalizeBreakoutUnit(unit), price: parseBreakoutCost(row[start + 3]) });
+    });
+  }
+  return items;
+}
+function mergeBreakoutImport(existingConfig, importedItems) {
+  const byId = new Map(existingConfig.map((item) => [item.id, item]));
+  let added = 0;
+  let updated = 0;
+  const areasSeen = new Set();
+  importedItems.forEach((entry) => {
+    areasSeen.add(entry.area);
+    const id = `${slugify(entry.area)}--${slugify(entry.code || entry.name)}`;
+    const existing = byId.get(id);
+    if (existing) {
+      byId.set(id, { ...existing, name: entry.name, code: entry.code, unit: entry.unit, price: entry.price, area: entry.area });
+      updated++;
+    } else {
+      byId.set(id, { id, area: entry.area, name: entry.name, code: entry.code, unit: entry.unit, price: entry.price, par: BREAKOUT_LOW_STOCK_THRESHOLD, active: true, order: byId.size });
+      added++;
+    }
+  });
+  return { list: Array.from(byId.values()), added, updated, areaCount: areasSeen.size };
 }
 
 function NumberRow({ label, value, onChange, disabled, onRemove }) {
@@ -196,6 +349,7 @@ export default function DailyOperationsHub({
     frozen: canManage || role === "gelato" || role === "dessert" || role === "employee",
     pax: canManage || role === "line" || role === "server" || role === "operations_server" || role === "employee",
     breakout: canManage || role === "employee" || role === "inventory",
+    dashboard: canManage,
     history: canManage,
   }), [canManage, role]);
   const firstTab = Object.keys(sectionAccess).find((key) => sectionAccess[key]) || "assignments";
@@ -205,10 +359,41 @@ export default function DailyOperationsHub({
   const [history, setHistory] = useState({});
   const [saveState, setSaveState] = useState("idle");
   const [newItem, setNewItem] = useState("");
+  const [assignmentRemarksId, setAssignmentRemarksId] = useState(null);
+  const [assignmentRemarksDraft, setAssignmentRemarksDraft] = useState("");
   const [newFlavorName, setNewFlavorName] = useState("");
   const [newFlavorUnit, setNewFlavorUnit] = useState("tubs");
   const [newBreakoutName, setNewBreakoutName] = useState("");
   const [breakoutAreaTab, setBreakoutAreaTab] = useState(null);
+  const [breakoutSearch, setBreakoutSearch] = useState("");
+  const [breakoutStatusFilter, setBreakoutStatusFilter] = useState("all");
+  const [breakoutTimerSeconds, setBreakoutTimerSeconds] = useState(0);
+  const [breakoutTimerRunning, setBreakoutTimerRunning] = useState(false);
+  const [breakoutNoteItemId, setBreakoutNoteItemId] = useState(null);
+  const [breakoutNoteDraft, setBreakoutNoteDraft] = useState("");
+  const breakoutCsvInputRef = useRef(null);
+  const breakoutSearchInputRef = useRef(null);
+  const [breakoutOnline, setBreakoutOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
+  const [breakoutBarcodeInput, setBreakoutBarcodeInput] = useState("");
+  const [breakoutBarcodeError, setBreakoutBarcodeError] = useState("");
+  const [breakoutHighlightId, setBreakoutHighlightId] = useState(null);
+  const [breakoutVoiceActive, setBreakoutVoiceActive] = useState(false);
+  const [breakoutVoiceTranscript, setBreakoutVoiceTranscript] = useState("");
+  const breakoutVoiceRecognitionRef = useRef(null);
+
+  useEffect(() => {
+    const goOnline = () => setBreakoutOnline(true);
+    const goOffline = () => setBreakoutOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => { window.removeEventListener("online", goOnline); window.removeEventListener("offline", goOffline); };
+  }, []);
+
+  useEffect(() => {
+    if (!breakoutTimerRunning) return undefined;
+    const interval = window.setInterval(() => setBreakoutTimerSeconds((seconds) => seconds + 1), 1000);
+    return () => window.clearInterval(interval);
+  }, [breakoutTimerRunning]);
 
   useEffect(() => { if (!sectionAccess[activeTab]) setActiveTab(firstTab); }, [activeTab, firstTab, sectionAccess]);
   useEffect(() => subscribeToOperationsSettings(venueId, setSettings, console.error), [venueId]);
@@ -252,16 +437,156 @@ export default function DailyOperationsHub({
       }];
     })),
     frozenWorkflow: record?.frozenWorkflow || { status: "not_started" },
-    breakout: Object.fromEntries(breakoutConfig.map((item) => [item.id, { stock: 0, stockUnit: "", orderQuantity: 0, ...(record?.breakout?.[item.id] || {}) }])),
+    breakout: Object.fromEntries(breakoutConfig.map((item) => [item.id, { stock: 0, stockUnit: item.unit || "", orderQuantity: 0, done: false, notes: "", level: "Full", ...(record?.breakout?.[item.id] || {}) }])),
     pax: { ...Object.fromEntries(PAX_SIZES.map((size) => [size, 0])), ...(record?.pax || {}) },
     notes: record?.notes || "",
   }), [clothItems, frozenConfig, breakoutConfig, leiItems, record]);
+
+  const breakoutUrgentByArea = useMemo(() => {
+    const counts = {};
+    activeBreakoutItems.forEach((item) => {
+      if (getBreakoutStatus(current.breakout[item.id]?.stock, item.par) === "urgent") counts[item.area] = (counts[item.area] || 0) + 1;
+    });
+    return counts;
+  }, [activeBreakoutItems, current.breakout]);
+  const breakoutSearchTerm = breakoutSearch.trim().toLowerCase();
+  const visibleBreakoutItems = activeBreakoutItems
+    .filter((item) => item.area === breakoutAreaTab)
+    .filter((item) => !breakoutSearchTerm || item.name.toLowerCase().includes(breakoutSearchTerm) || (item.code || "").toLowerCase().includes(breakoutSearchTerm))
+    .filter((item) => {
+      if (breakoutStatusFilter === "all") return true;
+      const stock = Number(current.breakout[item.id]?.stock) || 0;
+      if (breakoutStatusFilter === "belowPar") return stock < item.par;
+      if (breakoutStatusFilter === "needsRefill") return NEEDS_REORDER_LEVELS.has(current.breakout[item.id]?.level);
+      return getBreakoutStatus(stock, item.par) === breakoutStatusFilter;
+    });
+  const breakoutDoneCount = activeBreakoutItems.filter((item) => current.breakout[item.id]?.done).length;
+  const breakoutTotalCount = activeBreakoutItems.length;
+  const breakoutProgressPct = breakoutTotalCount ? Math.round((breakoutDoneCount / breakoutTotalCount) * 100) : 0;
+  const breakoutIsComplete = breakoutTotalCount > 0 && breakoutDoneCount === breakoutTotalCount;
+  const breakoutOrderedItems = activeBreakoutItems.filter((item) => Number(current.breakout[item.id]?.orderQuantity) > 0);
+  const breakoutTotalCost = breakoutOrderedItems.reduce((sum, item) => sum + Number(item.price || 0) * Number(current.breakout[item.id]?.orderQuantity || 0), 0);
+  const breakoutNoteCount = activeBreakoutItems.filter((item) => (current.breakout[item.id]?.notes || "").trim()).length;
+  const previousBreakoutDate = Object.keys(history || {})
+    .filter((date) => date < staffingDate && history[date]?.breakout)
+    .sort((a, b) => b.localeCompare(a))[0] || null;
+  const previousBreakoutRecord = previousBreakoutDate ? history[previousBreakoutDate] : null;
+  const previousBreakoutStats = previousBreakoutRecord
+    ? (() => {
+        const items = activeBreakoutItems.filter((item) => Number(previousBreakoutRecord.breakout?.[item.id]?.orderQuantity) > 0);
+        const cost = items.reduce((sum, item) => sum + Number(item.price || 0) * Number(previousBreakoutRecord.breakout[item.id].orderQuantity || 0), 0);
+        return { itemCount: items.length, cost };
+      })()
+    : null;
+
+  const breakoutOfflineKey = `pcc_breakout_draft_${venueId}_${staffingDate}`;
+  const breakoutLocalDraft = useMemo(() => {
+    try {
+      const raw = window.localStorage.getItem(breakoutOfflineKey);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }, [breakoutOfflineKey]);
+  const breakoutDraftDiffers = Boolean(breakoutLocalDraft && JSON.stringify(breakoutLocalDraft.record) !== JSON.stringify(record));
+
+  useEffect(() => {
+    if (!record) return;
+    try {
+      window.localStorage.setItem(breakoutOfflineKey, JSON.stringify({ savedAt: Date.now(), record }));
+    } catch {
+      // localStorage unavailable (private browsing, quota) — offline backup just won't be there.
+    }
+  }, [record, breakoutOfflineKey]);
+
+  const restoreBreakoutDraft = () => { if (breakoutLocalDraft?.record) setRecord(breakoutLocalDraft.record); };
+
+  const breakoutUrgentItemsAll = activeBreakoutItems.filter((item) => getBreakoutStatus(current.breakout[item.id]?.stock, item.par) === "urgent");
+  const breakoutLowItemsAll = activeBreakoutItems.filter((item) => getBreakoutStatus(current.breakout[item.id]?.stock, item.par) === "low");
+  const breakoutPaceItemsPerSecond = breakoutTimerSeconds > 0 && breakoutDoneCount > 0 ? breakoutDoneCount / breakoutTimerSeconds : 0;
+  const breakoutRemainingCount = Math.max(0, breakoutTotalCount - breakoutDoneCount);
+  const breakoutEtaSeconds = breakoutPaceItemsPerSecond > 0 ? Math.round(breakoutRemainingCount / breakoutPaceItemsPerSecond) : null;
+  const jumpToBreakoutItem = (item) => {
+    setBreakoutStatusFilter("all");
+    setBreakoutSearch("");
+    setBreakoutAreaTab(item.area);
+    setActiveTab("breakout");
+    setBreakoutHighlightId(item.id);
+    window.setTimeout(() => setBreakoutHighlightId((current) => (current === item.id ? null : current)), 2500);
+  };
+  const handleBreakoutBarcodeSubmit = (event) => {
+    event.preventDefault();
+    const code = breakoutBarcodeInput.trim();
+    if (!code) return;
+    const match = activeBreakoutItems.find((item) => item.code && item.code.toLowerCase() === code.toLowerCase());
+    setBreakoutBarcodeInput("");
+    if (!match) {
+      setBreakoutBarcodeError(`No item found for "${code}"`);
+      window.setTimeout(() => setBreakoutBarcodeError(""), 2500);
+      return;
+    }
+    setBreakoutBarcodeError("");
+    jumpToBreakoutItem(match);
+  };
+
+  const breakoutVoiceSupported = typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+  const parseBreakoutVoiceCommand = (transcript) => {
+    const match = transcript.trim().match(/^(?:order\s+)?(\d+)\s+(.+)$/i);
+    if (match) return { qty: Number(match[1]), query: match[2].trim() };
+    return { qty: 1, query: transcript.replace(/^order\s+/i, "").trim() };
+  };
+  const applyBreakoutVoiceCommand = (transcript) => {
+    setBreakoutVoiceTranscript(transcript);
+    const { qty, query } = parseBreakoutVoiceCommand(transcript);
+    if (!query) return;
+    const lowerQuery = query.toLowerCase();
+    const match = activeBreakoutItems.find((item) => item.name.toLowerCase().includes(lowerQuery) || lowerQuery.includes(item.name.toLowerCase()));
+    if (!match) {
+      setBreakoutBarcodeError(`Didn't recognize an item in "${transcript}"`);
+      window.setTimeout(() => setBreakoutBarcodeError(""), 3000);
+      return;
+    }
+    const value = current.breakout[match.id];
+    patchSection("breakout", { [match.id]: { ...value, orderQuantity: qty } });
+    jumpToBreakoutItem(match);
+  };
+  const toggleBreakoutVoiceOrder = () => {
+    if (breakoutVoiceActive) {
+      breakoutVoiceRecognitionRef.current?.stop();
+      return;
+    }
+    const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) return;
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = "en-US";
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.onresult = (event) => {
+      const transcript = event.results?.[0]?.[0]?.transcript || "";
+      applyBreakoutVoiceCommand(transcript);
+    };
+    recognition.onerror = () => setBreakoutVoiceActive(false);
+    recognition.onend = () => setBreakoutVoiceActive(false);
+    breakoutVoiceRecognitionRef.current = recognition;
+    recognition.start();
+    setBreakoutVoiceActive(true);
+  };
 
   const workflowStatusKey = current.frozenWorkflow?.status || "not_started";
   const frozenLocked = !canManage && workflowStatusKey === "submitted";
 
   const patchSection = (section, patch) => setRecord((previous) => ({ ...(previous || {}), [section]: { ...(current[section] || {}), ...patch } }));
   const saveRecord = async () => {
+    if (!breakoutOnline) {
+      // Realtime Database queues writes made while offline and flushes them on
+      // reconnect, but the promise won't resolve until then — don't block the
+      // UI on it. The localStorage draft (kept in sync below) is the real
+      // safety net if the tab reloads before that happens.
+      setSaveState("offline");
+      window.setTimeout(() => setSaveState("idle"), 2200);
+      saveDailyOperationsRecord(venueId, staffingDate, current, { uid: profile?.uid, name: profile?.displayName, role }).catch(() => {});
+      return;
+    }
     setSaveState("saving");
     try {
       await saveDailyOperationsRecord(venueId, staffingDate, current, {
@@ -376,7 +701,100 @@ export default function DailyOperationsHub({
   };
   const renameBreakoutItem = (id, name) => updateBreakoutConfig(breakoutConfig.map((item) => (item.id === id ? { ...item, name } : item)));
   const setBreakoutItemCode = (id, code) => updateBreakoutConfig(breakoutConfig.map((item) => (item.id === id ? { ...item, code } : item)));
+  const setBreakoutItemUnit = (id, unit) => updateBreakoutConfig(breakoutConfig.map((item) => (item.id === id ? { ...item, unit } : item)));
+  const setBreakoutItemPar = (id, par) => updateBreakoutConfig(breakoutConfig.map((item) => (item.id === id ? { ...item, par: Math.max(0, Number(par) || 0) } : item)));
+  const setBreakoutItemPrice = (id, price) => updateBreakoutConfig(breakoutConfig.map((item) => (item.id === id ? { ...item, price: Math.max(0, Number(price) || 0) } : item)));
+  const resetBreakoutSession = () => {
+    patchSection("breakout", Object.fromEntries(activeBreakoutItems.map((item) => [item.id, { ...current.breakout[item.id], done: false, orderQuantity: 0 }])));
+    setBreakoutTimerSeconds(0);
+    setBreakoutTimerRunning(false);
+  };
+  const exportBreakoutCsv = async () => {
+    const rows = breakoutOrderedItems.map((item) => {
+      const entry = current.breakout[item.id];
+      const qty = Number(entry.orderQuantity) || 0;
+      const price = Number(item.price) || 0;
+      const status = getBreakoutStatus(entry.stock, item.par);
+      return [item.code || "", item.name, entry.stockUnit || "", `$${price.toFixed(2)}`, qty, `$${(price * qty).toFixed(2)}`, entry.notes || "", item.area, BREAKOUT_STATUS_META[status].label.toUpperCase()];
+    });
+    const header = ["ITEM #", "ITEM DESCRIPTION", "UOM", "PRICE", "QUANTITY", "TOTAL", "NOTES", "CATEGORY", "STATUS"];
+    const csv = [header, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const stamp = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const filename = `breakout_${staffingDate}_${pad(stamp.getHours())}${pad(stamp.getMinutes())}.csv`;
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    if (showAlert) await showAlert("CSV exported", `Saved as ${filename}`, { tone: "success" });
+  };
+  const handleBreakoutCsvImport = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const parsed = parseBreakoutCsvBlocks(String(reader.result || ""));
+        if (!parsed.length) {
+          if (showAlert) await showAlert("Import failed", "No items found in that file. Expected the Item No. / Description / UOM / Cost warehouse export format.", { tone: "danger" });
+          return;
+        }
+        const { list, added, updated, areaCount } = mergeBreakoutImport(breakoutConfig, parsed);
+        await updateBreakoutConfig(list);
+        if (showAlert) await showAlert("CSV imported", `${added} item${added === 1 ? "" : "s"} added, ${updated} updated across ${areaCount} area${areaCount === 1 ? "" : "s"}.`, { tone: "success" });
+      } catch (error) {
+        console.error(error);
+        if (showAlert) await showAlert("Import failed", "Couldn't read that file. Make sure it's the warehouse breakout CSV export.", { tone: "danger" });
+      }
+    };
+    reader.readAsText(file);
+  };
+  const openBreakoutNote = (item) => { setBreakoutNoteItemId(item.id); setBreakoutNoteDraft(current.breakout[item.id]?.notes || ""); };
+  const closeBreakoutNote = () => { setBreakoutNoteItemId(null); setBreakoutNoteDraft(""); };
+  const saveBreakoutNote = () => {
+    patchSection("breakout", { [breakoutNoteItemId]: { ...current.breakout[breakoutNoteItemId], notes: breakoutNoteDraft } });
+    closeBreakoutNote();
+  };
+  const breakoutNoteItem = breakoutNoteItemId ? breakoutConfig.find((item) => item.id === breakoutNoteItemId) : null;
   const toggleBreakoutItemActive = (id) => updateBreakoutConfig(breakoutConfig.map((item) => (item.id === id ? { ...item, active: !item.active } : item)));
+
+  useEffect(() => {
+    if (activeTab !== "breakout") return undefined;
+    const handleKeyDown = (event) => {
+      const isMeta = event.metaKey || event.ctrlKey;
+      const tag = event.target.tagName;
+      const isTyping = tag === "INPUT" || tag === "TEXTAREA" || event.target.isContentEditable;
+
+      if (event.key === "Escape" && breakoutNoteItemId) {
+        event.preventDefault();
+        closeBreakoutNote();
+        return;
+      }
+      if (isMeta && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        breakoutSearchInputRef.current?.focus();
+        return;
+      }
+      if (isMeta && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        if (breakoutOrderedItems.length > 0) exportBreakoutCsv();
+        return;
+      }
+      if (!isTyping && !isMeta && !event.altKey && /^[1-9]$/.test(event.key)) {
+        const area = breakoutAreaNames[Number(event.key) - 1];
+        if (area) setBreakoutAreaTab(area);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- closeBreakoutNote/exportBreakoutCsv are plain consts recreated each render; breakoutOrderedItems already forces re-subscription every render so the closures never go stale.
+  }, [activeTab, breakoutNoteItemId, breakoutAreaNames, breakoutOrderedItems]);
 
   const visibleTables = tables.filter((table) => !(table.childIds && table.childIds.length));
   const livePax = visibleTables.reduce((result, table) => {
@@ -390,11 +808,37 @@ export default function DailyOperationsHub({
   const liveGuestTotal = Object.entries(livePax).reduce((sum, [size, count]) => sum + Number(size) * Number(count || 0), 0);
   const clothTotal = Object.values(current.cloths).reduce((sum, count) => sum + Number(count || 0), 0);
 
+  const tableSizeBreakdown = {};
+  visibleTables.forEach((table) => {
+    const cap = Number(table.capacity) || 0;
+    if (cap <= 0) return;
+    const key = cap >= 10 ? "10+" : String(cap);
+    tableSizeBreakdown[key] = (tableSizeBreakdown[key] || 0) + 1;
+  });
+  const tableSizeEntries = sortedTableSizeEntries(tableSizeBreakdown);
+  const tableSizeTotal = tableSizeEntries.reduce((sum, [, count]) => sum + count, 0);
+  const taroRollsPerTable = {};
+  tableSizeEntries.forEach(([size]) => {
+    const saved = settings?.taroRollsPerTable?.[size];
+    taroRollsPerTable[size] = Number.isFinite(Number(saved)) ? Number(saved) : 1;
+  });
+  const totalTaroBaskets = tableSizeEntries.reduce((sum, [size, count]) => sum + count * (taroRollsPerTable[size] || 0), 0);
+  const setTaroRollsPerTable = (size, value) =>
+    saveOperationsSettings(venueId, { taroRollsPerTable: { ...(settings?.taroRollsPerTable || {}), [size]: Math.max(0, Number(value) || 0) } }, { uid: profile?.uid, name: profile?.displayName });
+
   const tabs = [
     ["assignments", "Assignment", ClipboardList], ["cloths", "Cloths", Shirt], ["leis", "Leis", Flower2],
-    ["frozen", "Gelato / Ice Cream", IceCreamBowl], ["breakout", "Breakout", Package], ["pax", "Pax", UsersRound],
-    ["history", "History", CalendarDays],
+    ["frozen", "Gelato / Ice Cream", IceCreamBowl], ["breakout", "Breakout", Package], ["pax", "Taro Rolls", ShoppingBasket],
+    ["dashboard", "Dashboard", LayoutDashboard], ["history", "History", CalendarDays],
   ].filter(([id]) => sectionAccess[id]);
+
+  const openAssignmentRemarks = (id) => { setAssignmentRemarksId(id); setAssignmentRemarksDraft(staffingAssignments?.[id]?.notes || ""); };
+  const closeAssignmentRemarks = () => { setAssignmentRemarksId(null); setAssignmentRemarksDraft(""); };
+  const saveAssignmentRemarks = () => {
+    const row = staffingAssignments?.[assignmentRemarksId];
+    onChangeAssignment(assignmentRemarksId, { ...row, notes: assignmentRemarksDraft });
+    closeAssignmentRemarks();
+  };
 
   return (
     <div className="daily-operations-hub">
@@ -410,22 +854,64 @@ export default function DailyOperationsHub({
 
       {activeTab === "assignments" && <section className="ops-panel">
         <div className="ops-panel-heading"><div><h3>Today’s Assignment</h3><p>Operational employees can see this list. Managers can add or remove assignments.</p></div>{canManageStaffing && <button type="button" className="ops-primary" onClick={onSaveStaffing}><Save size={14}/>{staffingSaveState === "saving" ? "Saving…" : "Save"}</button>}</div>
-        <div className="ops-assignment-list">
+        <div className="ops-assignment-grid">
           {Object.entries(staffingAssignments || {}).length === 0 && <div className="ops-empty">No assignments have been posted for this date.</div>}
-          {Object.entries(staffingAssignments || {}).map(([id,value]) => <div className="ops-assignment-row" key={id}>
-            <input disabled={!canManageStaffing} value={value.position || value.assignment || value.areaName || ""} placeholder="Assignment / station" onChange={(event) => onChangeAssignment(id, {...value, position:event.target.value, assignment:event.target.value, areaName:event.target.value})}/>
-            <input disabled={!canManageStaffing} value={value.displayName || ""} placeholder="Employee name" onChange={(event) => onChangeAssignment(id, {...value, displayName:event.target.value})}/>
-            {canManageStaffing && <button type="button" onClick={() => onChangeAssignment(id,null)}><Trash2 size={14}/></button>}
-          </div>)}
-          {canManageStaffing && <button type="button" className="ops-add" onClick={() => onChangeAssignment(`assignment-${Date.now()}`, { assignment:"", displayName:"", active:true })}><Plus size={14}/> Add assignment</button>}
+          {Object.entries(staffingAssignments || {}).map(([id, value]) => {
+            const hasRemarks = Boolean((value.notes || "").trim());
+            return (
+              <div className="ops-assignment-card" key={id}>
+                <div className="ops-assignment-card-top">
+                  <input disabled={!canManageStaffing} className="ops-assignment-station" value={value.position || value.assignment || value.areaName || ""} placeholder="Station / assignment" onChange={(event) => onChangeAssignment(id, {...value, position:event.target.value, assignment:event.target.value, areaName:event.target.value})}/>
+                  {canManageStaffing && <button type="button" className="ops-assignment-remove" onClick={() => onChangeAssignment(id,null)}><Trash2 size={14}/></button>}
+                </div>
+                <input disabled={!canManageStaffing} className="ops-assignment-name" value={value.displayName || ""} placeholder="Employee name" onChange={(event) => onChangeAssignment(id, {...value, displayName:event.target.value})}/>
+                <div className="ops-assignment-time-row">
+                  <label><span>Opening</span><input type="time" disabled={!canManageStaffing} value={value.opening || ""} onChange={(event) => onChangeAssignment(id, {...value, opening:event.target.value})}/></label>
+                  <label><span>Closing</span><input type="time" disabled={!canManageStaffing} value={value.closing || ""} onChange={(event) => onChangeAssignment(id, {...value, closing:event.target.value})}/></label>
+                </div>
+                <button type="button" className={`ops-assignment-remarks-button ${hasRemarks ? "has-remarks" : ""}`} onClick={() => openAssignmentRemarks(id)}>
+                  {hasRemarks ? <em>{value.notes.slice(0, 60)}{value.notes.length > 60 ? "…" : ""}</em> : "+ Add remarks / SOP note"}
+                </button>
+              </div>
+            );
+          })}
+          {canManageStaffing && <button type="button" className="ops-add ops-assignment-add" onClick={() => onChangeAssignment(`assignment-${Date.now()}`, { assignment:"", displayName:"", active:true })}><Plus size={14}/> Add assignment</button>}
         </div>
+
+        {assignmentRemarksId && (
+          <div className="pcc-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeAssignmentRemarks(); }}>
+            <section className="ops-breakout-note-modal" role="dialog" aria-modal="true">
+              <div className="ops-breakout-note-modal-head">
+                <strong>{staffingAssignments?.[assignmentRemarksId]?.displayName || staffingAssignments?.[assignmentRemarksId]?.position || "Assignment"} — Remarks</strong>
+                <button type="button" onClick={closeAssignmentRemarks} aria-label="Close"><X size={15}/></button>
+              </div>
+              <textarea
+                value={assignmentRemarksDraft}
+                placeholder="SOP notes, reminders, or what to do at this station…"
+                onChange={(event) => setAssignmentRemarksDraft(event.target.value)}
+                rows={5}
+                disabled={!canManageStaffing}
+              />
+              {canManageStaffing ? (
+                <div className="ops-breakout-note-modal-actions">
+                  <button type="button" className="ops-primary" onClick={saveAssignmentRemarks}>Save</button>
+                  <button type="button" className="ops-secondary" onClick={closeAssignmentRemarks}>Cancel</button>
+                </div>
+              ) : (
+                <div className="ops-breakout-note-modal-actions">
+                  <button type="button" className="ops-secondary" onClick={closeAssignmentRemarks}>Close</button>
+                </div>
+              )}
+            </section>
+          </div>
+        )}
       </section>}
 
       {activeTab === "cloths" && <section className="ops-panel">
         <div className="ops-panel-heading"><div><h3>Cloth Count</h3><p>Enter leftover quantities. The total updates automatically.</p></div><div className="ops-total-chip"><span>Total</span><strong>{clothTotal}</strong></div></div>
         <div className="ops-count-list">{clothItems.map((name) => <NumberRow key={name} label={name} value={current.cloths[name]} disabled={false} onChange={(value) => patchSection("cloths", {[name]:value})} onRemove={canManage ? () => removeSettingItem("clothItems", clothItems, name) : null}/>)}</div>
         {canManage && <div className="ops-inline-add"><input value={newItem} placeholder="Add another cloth item" onChange={(event)=>setNewItem(event.target.value)}/><button type="button" onClick={()=>addSettingItem("clothItems", clothItems)}><Plus size={14}/> Add</button></div>}
-        <button type="button" className="ops-primary ops-save" onClick={saveRecord}><Save size={14}/>{saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : "Save cloth count"}</button>
+        <button type="button" className="ops-primary ops-save" onClick={saveRecord}><Save size={14}/>{saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "offline" ? "Saved locally (offline)" : "Save cloth count"}</button>
       </section>}
 
       {activeTab === "leis" && <section className="ops-panel">
@@ -519,43 +1005,240 @@ export default function DailyOperationsHub({
       </section>}
 
       {activeTab === "breakout" && <section className="ops-panel">
-        <div className="ops-panel-heading"><div><h3>Breakout / Inventory</h3><p>Track stock on hand and how much to order, by area.</p></div></div>
+        <div className="ops-panel-heading">
+          <div><h3>Breakout / Inventory</h3><p>Track stock on hand and how much to order, by area.</p></div>
+          <button type="button" className="ops-secondary" onClick={exportBreakoutCsv} disabled={breakoutOrderedItems.length === 0}><Download size={14}/> Export CSV</button>
+        </div>
+
+        {!breakoutOnline && (
+          <div className="ops-breakout-offline-banner"><WifiOff size={14}/> You're offline. Changes are saved to this device and will sync once you're back online.</div>
+        )}
+        {breakoutDraftDiffers && (
+          <div className="ops-breakout-restore-banner">
+            <span>Unsynced changes found from {new Date(breakoutLocalDraft.savedAt).toLocaleString()}.</span>
+            <button type="button" onClick={restoreBreakoutDraft}>Restore</button>
+          </div>
+        )}
+
+        <div className="ops-breakout-progress-row">
+          <div className="ops-breakout-progress-track"><div className="ops-breakout-progress-fill" style={{ width: `${breakoutProgressPct}%` }} /></div>
+          <span className="ops-breakout-progress-label">{breakoutDoneCount} of {breakoutTotalCount} items done ({breakoutProgressPct}%)</span>
+          <div className="ops-breakout-timer">
+            <span>⏱️ {formatElapsed(breakoutTimerSeconds)}</span>
+            <button type="button" onClick={() => setBreakoutTimerRunning((running) => !running)}>{breakoutTimerRunning ? "Stop" : "Start"}</button>
+            <button type="button" onClick={() => { setBreakoutTimerSeconds(0); setBreakoutTimerRunning(false); }}>Reset</button>
+          </div>
+        </div>
+
+        {previousBreakoutStats && (
+          <div className="ops-breakout-trend-strip">
+            <span>vs {formatDate(previousBreakoutDate)}:</span>
+            <span>Items {previousBreakoutStats.itemCount} → {breakoutOrderedItems.length}{trendArrowText(breakoutOrderedItems.length, previousBreakoutStats.itemCount)}</span>
+            <span>Cost ${previousBreakoutStats.cost.toFixed(2)} → ${breakoutTotalCost.toFixed(2)}{trendArrowText(breakoutTotalCost, previousBreakoutStats.cost)}</span>
+          </div>
+        )}
+
+        {breakoutIsComplete && (
+          <div className="ops-breakout-complete-banner">
+            <div><strong>Breakout Complete! ✓</strong><span>{breakoutOrderedItems.length} items ordered · ${breakoutTotalCost.toFixed(2)} total · {formatElapsed(breakoutTimerSeconds)} elapsed</span></div>
+            <div className="ops-breakout-complete-actions">
+              <button type="button" className="ops-primary" onClick={exportBreakoutCsv} disabled={breakoutOrderedItems.length === 0}>Export CSV</button>
+              <button type="button" className="ops-secondary" onClick={resetBreakoutSession}>New Breakout</button>
+            </div>
+          </div>
+        )}
+
+        <div className="ops-breakout-search">
+          <Search size={14} />
+          <input
+            ref={breakoutSearchInputRef}
+            type="text"
+            value={breakoutSearch}
+            placeholder="Search items by name or code…"
+            onChange={(event) => setBreakoutSearch(event.target.value)}
+          />
+          {breakoutSearch && <button type="button" onClick={() => setBreakoutSearch("")} aria-label="Clear search"><X size={13}/></button>}
+        </div>
+
+        <div className="ops-breakout-scan-row">
+          <form className="ops-breakout-barcode-form" onSubmit={handleBreakoutBarcodeSubmit}>
+            <Barcode size={14} />
+            <input
+              type="text"
+              inputMode="numeric"
+              value={breakoutBarcodeInput}
+              placeholder="Scan or type item # + Enter"
+              onChange={(event) => setBreakoutBarcodeInput(event.target.value)}
+            />
+          </form>
+          {breakoutBarcodeError && <span className="ops-breakout-barcode-error">{breakoutBarcodeError}</span>}
+          {breakoutVoiceSupported && (
+            <button
+              type="button"
+              className={`ops-breakout-voice-button ${breakoutVoiceActive ? "active" : ""}`}
+              onClick={toggleBreakoutVoiceOrder}
+              title="Voice order: say &quot;order 50 ice cubes&quot;"
+            >
+              <Mic size={14}/> {breakoutVoiceActive ? "Listening…" : "Voice order"}
+            </button>
+          )}
+          {breakoutVoiceTranscript && <span className="ops-breakout-voice-transcript">"{breakoutVoiceTranscript}"</span>}
+        </div>
 
         <div className="ops-breakout-area-tabs">
-          {breakoutAreaNames.map((area) => (
-            <button type="button" key={area} className={breakoutAreaTab === area ? "active" : ""} onClick={() => setBreakoutAreaTab(area)}>{area}</button>
-          ))}
+          {breakoutAreaNames.map((area) => {
+            const urgentCount = breakoutUrgentByArea[area] || 0;
+            return (
+              <button type="button" key={area} className={breakoutAreaTab === area ? "active" : ""} onClick={() => setBreakoutAreaTab(area)}>
+                {area}{urgentCount > 0 && <span className="ops-breakout-urgent-badge">{urgentCount}</span>}
+              </button>
+            );
+          })}
           {breakoutAreaNames.length === 0 && <span className="ops-empty">No breakout areas configured yet.</span>}
         </div>
 
-        <div className="ops-breakout-list">
-          <div className="ops-breakout-row ops-breakout-header">
-            <span>Product</span><span>Stock</span><span>Unit</span><span>Order Qty</span>
-          </div>
-          {activeBreakoutItems.filter((item) => item.area === breakoutAreaTab).map((item) => {
+        <div className="ops-breakout-status-filters">
+          {[
+            ["all", "All Items"],
+            ["urgent", "🔴 Urgent"],
+            ["low", "🟡 Low Stock"],
+            ["ok", "✓ OK"],
+            ["belowPar", "Below Par"],
+            ["needsRefill", "🧺 Needs Refill"],
+          ].map(([key, label]) => (
+            <button
+              type="button"
+              key={key}
+              className={`filter-${key} ${breakoutStatusFilter === key ? "active" : ""}`}
+              onClick={() => setBreakoutStatusFilter(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <p className="ops-breakout-shortcuts">⌨️ 1-9 Areas · Ctrl/⌘+F Search · Ctrl/⌘+S Export · Esc Close note</p>
+
+        <datalist id="ops-breakout-unit-options">
+          {BREAKOUT_UNIT_OPTIONS.map((unit) => <option key={unit} value={unit} />)}
+        </datalist>
+
+        <div className="ops-breakout-grid">
+          {visibleBreakoutItems.map((item) => {
             const value = current.breakout[item.id];
+            const status = getBreakoutStatus(value.stock, item.par);
+            const StatusIcon = BREAKOUT_STATUS_META[status].icon;
+            const suggestion = getReorderSuggestion(value.stock, item.par);
+            const hasNote = Boolean((value.notes || "").trim());
+            const previousQty = Number(previousBreakoutRecord?.breakout?.[item.id]?.orderQuantity) || 0;
+            const currentQty = Number(value.orderQuantity) || 0;
+            const deviationPct = previousQty > 0 ? Math.round(((currentQty - previousQty) / previousQty) * 100) : 0;
+            const showDeviation = previousQty > 0 && currentQty > 0 && Math.abs(deviationPct) >= 25;
             return (
-              <div className="ops-breakout-row" key={item.id}>
-                <span className="ops-breakout-name">{item.name}{item.code && <small>{item.code}</small>}</span>
-                <input type="number" min="0" step="0.5" value={value.stock} onChange={(event) => patchSection("breakout", { [item.id]: { ...value, stock: Math.max(0, Number(event.target.value) || 0) } })} />
-                <input type="text" placeholder="case, box…" value={value.stockUnit} onChange={(event) => patchSection("breakout", { [item.id]: { ...value, stockUnit: event.target.value } })} />
-                <input type="number" min="0" value={value.orderQuantity} onChange={(event) => patchSection("breakout", { [item.id]: { ...value, orderQuantity: Math.max(0, Number(event.target.value) || 0) } })} />
+              <div className={`ops-breakout-card status-${status} ${value.done ? "is-done" : ""} ${hasNote ? "has-note" : ""} ${breakoutHighlightId === item.id ? "is-scanned" : ""}`} key={item.id}>
+                <div className="ops-breakout-card-top">
+                  <label className="ops-breakout-done-check">
+                    <input type="checkbox" checked={!!value.done} onChange={(event) => patchSection("breakout", { [item.id]: { ...value, done: event.target.checked } })} />
+                  </label>
+                  <span className="ops-breakout-card-name">{item.name}{item.code && <small>{item.code}</small>}</span>
+                  <span className="ops-breakout-status-badge"><StatusIcon size={11}/> {BREAKOUT_STATUS_META[status].label}</span>
+                </div>
+                <div className="ops-breakout-stock-value">
+                  <input type="number" min="0" step="0.5" value={value.stock} onChange={(event) => patchSection("breakout", { [item.id]: { ...value, stock: Math.max(0, Number(event.target.value) || 0) } })} />
+                  <input
+                    type="text"
+                    list="ops-breakout-unit-options"
+                    placeholder="unit"
+                    value={value.stockUnit}
+                    onChange={(event) => patchSection("breakout", { [item.id]: { ...value, stockUnit: event.target.value } })}
+                    onBlur={(event) => {
+                      const normalized = normalizeBreakoutUnit(event.target.value);
+                      if (normalized !== value.stockUnit) patchSection("breakout", { [item.id]: { ...value, stockUnit: normalized } });
+                    }}
+                  />
+                </div>
+                <div className={`ops-breakout-level-row ${NEEDS_REORDER_LEVELS.has(value.level) ? "needs-refill" : ""}`}>
+                  <label>
+                    <span>Compartment</span>
+                    <select value={value.level || "Full"} onChange={(event) => patchSection("breakout", { [item.id]: { ...value, level: event.target.value } })}>
+                      {LEVELS.map((level) => <option key={level}>{level}</option>)}
+                    </select>
+                  </label>
+                  {NEEDS_REORDER_LEVELS.has(value.level) && <span className="ops-breakout-refill-chip"><AlertTriangle size={11}/> Refill</span>}
+                </div>
+                <div className="ops-breakout-par-row">
+                  <span>Par: {item.par}</span>
+                  <span className="ops-breakout-suggestion">{suggestion.text}</span>
+                </div>
+                <label className="ops-breakout-order-field">
+                  <span>Order qty</span>
+                  <div className="ops-breakout-order-input-row">
+                    <input type="number" min="0" value={value.orderQuantity} onChange={(event) => patchSection("breakout", { [item.id]: { ...value, orderQuantity: Math.max(0, Number(event.target.value) || 0) } })} />
+                    {suggestion.qty > 0 && <button type="button" className="ops-breakout-use-suggestion" onClick={() => patchSection("breakout", { [item.id]: { ...value, orderQuantity: suggestion.qty } })}>Use {suggestion.qty}</button>}
+                  </div>
+                  {showDeviation && (
+                    <span className={`ops-breakout-deviation ${deviationPct > 0 ? "up" : "down"}`} title={`${previousQty} last time vs ${currentQty} now`}>
+                      {deviationPct > 0 ? "↑" : "↓"} {Math.abs(deviationPct)}% vs last time
+                    </span>
+                  )}
+                </label>
+                <button type="button" className="ops-breakout-note-button" onClick={() => openBreakoutNote(item)}>
+                  {hasNote ? <em>{value.notes.slice(0, 60)}{value.notes.length > 60 ? "…" : ""}</em> : "+ Add note"}
+                </button>
               </div>
             );
           })}
-          {breakoutAreaTab && activeBreakoutItems.filter((item) => item.area === breakoutAreaTab).length === 0 && <div className="ops-empty">No items in this area yet.</div>}
+          {breakoutAreaTab && visibleBreakoutItems.length === 0 && (
+            <div className="ops-empty">
+              {breakoutSearchTerm
+                ? `No items found matching "${breakoutSearch.trim()}".`
+                : breakoutStatusFilter !== "all"
+                  ? "No items match this filter in this area."
+                  : "No items in this area yet."}
+            </div>
+          )}
         </div>
 
-        <button type="button" className="ops-primary ops-save" onClick={saveRecord}><Save size={14}/>{saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : "Save breakout counts"}</button>
+        <button type="button" className="ops-primary ops-save" onClick={saveRecord}><Save size={14}/>{saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "offline" ? "Saved locally (offline)" : "Save breakout counts"}</button>
+        {breakoutNoteCount > 0 && <span className="ops-breakout-note-count">Notes ({breakoutNoteCount})</span>}
+
+        {breakoutNoteItem && (
+          <div className="pcc-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeBreakoutNote(); }}>
+            <section className="ops-breakout-note-modal" role="dialog" aria-modal="true">
+              <div className="ops-breakout-note-modal-head">
+                <strong>{breakoutNoteItem.name}</strong>
+                <button type="button" onClick={closeBreakoutNote} aria-label="Close"><X size={15}/></button>
+              </div>
+              <textarea
+                value={breakoutNoteDraft}
+                placeholder="e.g. Temporarily out at supplier, use CoolBlue vendor instead"
+                onChange={(event) => setBreakoutNoteDraft(event.target.value)}
+                rows={4}
+              />
+              <div className="ops-breakout-note-modal-actions">
+                <button type="button" className="ops-primary" onClick={saveBreakoutNote}>Save</button>
+                <button type="button" className="ops-secondary" onClick={closeBreakoutNote}>Cancel</button>
+              </div>
+            </section>
+          </div>
+        )}
 
         {canManage && (
           <div className="ops-flavor-config">
-            <h4>Breakout item configuration</h4>
+            <div className="ops-breakout-config-heading">
+              <h4>Breakout item configuration</h4>
+              <button type="button" className="ops-secondary" onClick={() => breakoutCsvInputRef.current?.click()}><Upload size={13}/> Import CSV</button>
+              <input ref={breakoutCsvInputRef} hidden type="file" accept=".csv,text/csv" onChange={handleBreakoutCsvImport} />
+            </div>
+            <p className="designer-small-copy">Import the warehouse Item No. / Description / UOM / Cost export (side-by-side categories). Matching item numbers are updated in place; new ones are added.</p>
             <div className="ops-flavor-config-list">
               {breakoutConfig.filter((item) => item.area === breakoutAreaTab).map((item) => (
                 <div className={`ops-flavor-config-row ops-breakout-config-row ${!item.active ? "inactive" : ""}`} key={item.id}>
                   <input value={item.name} onChange={(event) => renameBreakoutItem(item.id, event.target.value)} />
                   <input placeholder="Code (optional)" value={item.code} onChange={(event) => setBreakoutItemCode(item.id, event.target.value)} />
+                  <input list="ops-breakout-unit-options" placeholder="Unit" title="Default unit" value={item.unit} onChange={(event) => setBreakoutItemUnit(item.id, event.target.value)} onBlur={(event) => setBreakoutItemUnit(item.id, normalizeBreakoutUnit(event.target.value))} />
+                  <input type="number" min="0" placeholder="Par" title="Par level" value={item.par} onChange={(event) => setBreakoutItemPar(item.id, event.target.value)} />
+                  <input type="number" min="0" step="0.01" placeholder="Price" title="Unit price" value={item.price} onChange={(event) => setBreakoutItemPrice(item.id, event.target.value)} />
                   <button type="button" className="ops-flavor-toggle" onClick={() => toggleBreakoutItemActive(item.id)}>{item.active ? "Deactivate" : "Restore"}</button>
                 </div>
               ))}
@@ -568,10 +1251,85 @@ export default function DailyOperationsHub({
         )}
       </section>}
 
+      {activeTab === "dashboard" && <section className="ops-panel">
+        <div className="ops-panel-heading"><div><h3>Breakout Dashboard</h3><p>Live view of today's breakout — updates whenever anyone saves their counts.</p></div></div>
+
+        <div className="ops-dashboard-grid">
+          <div className="ops-dashboard-widget">
+            <div className="ops-dashboard-widget-head"><XCircle size={14}/><span>Urgent items</span><strong className="urgent">{breakoutUrgentItemsAll.length}</strong></div>
+            {breakoutUrgentItemsAll.length === 0 && <div className="ops-empty">Nothing urgent right now.</div>}
+            <div className="ops-dashboard-item-list">
+              {breakoutUrgentItemsAll.slice(0, 12).map((item) => (
+                <button type="button" key={item.id} onClick={() => jumpToBreakoutItem(item)}>
+                  <span>{item.name}</span><small>{item.area} · stock {current.breakout[item.id]?.stock ?? 0}</small>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="ops-dashboard-widget">
+            <div className="ops-dashboard-widget-head"><AlertTriangle size={14}/><span>Low stock</span><strong className="low">{breakoutLowItemsAll.length}</strong></div>
+            {breakoutLowItemsAll.length === 0 && <div className="ops-empty">No low-stock items.</div>}
+            <div className="ops-dashboard-item-list">
+              {breakoutLowItemsAll.slice(0, 12).map((item) => (
+                <button type="button" key={item.id} onClick={() => jumpToBreakoutItem(item)}>
+                  <span>{item.name}</span><small>{item.area} · stock {current.breakout[item.id]?.stock ?? 0} / par {item.par}</small>
+                </button>
+              ))}
+            </div>
+            {breakoutLowItemsAll.length > 0 && <p className="designer-small-copy">Consider pre-ordering these before they go urgent.</p>}
+          </div>
+
+          <div className="ops-dashboard-widget">
+            <div className="ops-dashboard-widget-head"><Gauge size={14}/><span>Progress</span></div>
+            <div className="ops-breakout-progress-track"><div className="ops-breakout-progress-fill" style={{ width: `${breakoutProgressPct}%` }} /></div>
+            <p>{breakoutDoneCount} of {breakoutTotalCount} items done ({breakoutProgressPct}%)</p>
+            <p>⏱️ {formatElapsed(breakoutTimerSeconds)} elapsed</p>
+            <p>{breakoutEtaSeconds !== null ? `Est. ${formatElapsed(breakoutEtaSeconds)} remaining at current pace` : "Not enough progress yet to estimate completion"}</p>
+          </div>
+
+          <div className="ops-dashboard-widget">
+            <div className="ops-dashboard-widget-head"><Package size={14}/><span>Cost tracking</span></div>
+            <p className="ops-dashboard-big-number">${breakoutTotalCost.toFixed(2)}</p>
+            <p>{breakoutOrderedItems.length} items ordered so far</p>
+            {previousBreakoutStats && <p>vs {formatDate(previousBreakoutDate)}: ${previousBreakoutStats.cost.toFixed(2)}{trendArrowText(breakoutTotalCost, previousBreakoutStats.cost)}</p>}
+          </div>
+        </div>
+      </section>}
+
       {activeTab === "pax" && <section className="ops-panel">
-        <div className="ops-panel-heading"><div><h3>Pax Table Dashboard</h3><p>Manual counts support bread and taro-roll preparation. Live counts come from occupied seating tables.</p></div></div>
+        <div className="ops-panel-heading"><div><h3>Taro Rolls (Pax)</h3><p>Table counts come straight from today's seating layout — screenshot the tile row below for prep.</p></div></div>
+
+        <div className="ops-taro-panel">
+          {tableSizeEntries.length === 0 ? (
+            <div className="ops-empty">No tables in today's seating layout yet.</div>
+          ) : (
+            <>
+              <div className="ops-taro-grid">
+                {tableSizeEntries.map(([size, count]) => (
+                  <div className="ops-taro-tile" key={size}>
+                    <span className="ops-taro-tile-count">{count}</span>
+                    <span className="ops-taro-tile-label">table{count === 1 ? "" : "s"} of {size}</span>
+                    {canManage && (
+                      <label className="ops-taro-tile-baskets">
+                        <span>Baskets/table</span>
+                        <input type="number" min="0" step="0.5" value={taroRollsPerTable[size]} onChange={(event) => setTaroRollsPerTable(size, event.target.value)} />
+                      </label>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="ops-taro-total">
+                <div><span>Total tables</span><strong>{tableSizeTotal}</strong></div>
+                <div><span>Total baskets to prep</span><strong>{totalTaroBaskets}</strong></div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="ops-panel-heading"><div><h4>Manual guest counts</h4><p>Optional — for reference alongside the live table breakdown above.</p></div></div>
         <div className="ops-metrics"><div><span>Manual tables</span><strong>{manualTableTotal}</strong></div><div><span>Manual guests</span><strong>{manualPaxTotal}</strong></div><div><span>Live occupied guests</span><strong>{liveGuestTotal}</strong></div></div>
-        <div className="ops-pax-layout"><div><h4>Manual table counts</h4>{PAX_SIZES.map((size)=><NumberRow key={size} label={`${size} Pax`} value={current.pax[size]} disabled={false} onChange={(value)=>patchSection("pax",{[size]:value})}/>)}</div><div><h4>Live seating chart</h4><div className="ops-live-pax">{Object.keys(livePax).length===0?<div className="ops-empty">No occupied tables with guest counts yet.</div>:Object.entries(livePax).sort((a,b)=>Number(a[0])-Number(b[0])).map(([size,count])=><div key={size}><span>{size} Pax</span><strong>{count} table{Number(count)===1?"":"s"}</strong></div>)}</div></div></div>
+        <div className="ops-pax-layout"><div><h4>Manual guest counts</h4>{PAX_SIZES.map((size)=><NumberRow key={size} label={`${size} Pax`} value={current.pax[size]} disabled={false} onChange={(value)=>patchSection("pax",{[size]:value})}/>)}</div><div><h4>Live occupied tables</h4><div className="ops-live-pax">{Object.keys(livePax).length===0?<div className="ops-empty">No occupied tables with guest counts yet.</div>:Object.entries(livePax).sort((a,b)=>Number(a[0])-Number(b[0])).map(([size,count])=><div key={size}><span>{size} Pax</span><strong>{count} table{Number(count)===1?"":"s"}</strong></div>)}</div></div></div>
         <button type="button" className="ops-primary ops-save" onClick={saveRecord}><Save size={14}/> Save pax counts</button>
       </section>}
 

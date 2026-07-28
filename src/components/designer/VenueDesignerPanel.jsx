@@ -9,6 +9,7 @@ import {
   Layers3,
   Maximize2,
   RotateCcw,
+  RotateCw,
   Save,
   Lock,
   Unlock,
@@ -133,13 +134,13 @@ export default function VenueDesignerPanel({
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    if (!file.type.startsWith("image/")) { setMessage("Choose a PNG, JPG, or WEBP blueprint image."); return; }
+    if (!file.type.startsWith("image/")) { setMessage("Choose a PNG, JPG, WEBP, or SVG blueprint image."); return; }
     if (file.size > 8 * 1024 * 1024) { setMessage("Blueprint must be smaller than 8 MB."); return; }
     const reader = new FileReader();
     reader.onload = () => {
       // Start fit to the current canvas so huge venues (Gateway/Aloha) don't
       // load a tiny or absurdly stretched image — drag/resize from there.
-      onBlueprintChange?.({ dataUrl: String(reader.result), visible: true, opacity: 0.28, x: 0, y: 0, width: canvasWidth, height: canvasHeight });
+      onBlueprintChange?.({ dataUrl: String(reader.result), visible: true, opacity: 0.28, x: 0, y: 0, width: canvasWidth, height: canvasHeight, rotate: 0 });
       setMessage("Blueprint loaded for tracing. Use \"Move & resize\" below to position it.");
     };
     reader.readAsDataURL(file);
@@ -151,6 +152,7 @@ export default function VenueDesignerPanel({
     onBlueprintChange?.({ x: Math.max(0, (canvasWidth - width) / 2), y: Math.max(0, (canvasHeight - height) / 2) });
   };
   const fitBlueprintToCanvas = () => onBlueprintChange?.({ x: 0, y: 0, width: canvasWidth, height: canvasHeight });
+  const rotateBlueprintBy = (delta) => onBlueprintChange?.({ rotate: Math.round(((blueprint?.rotate || 0) + delta + 360) % 360) });
 
   const applyCanvas = () => {
     onResizeCanvas?.({ width: Math.max(1200, Math.min(200000, Number(canvasDraft.width) || canvasWidth)), height: Math.max(900, Math.min(200000, Number(canvasDraft.height) || canvasHeight)) });
@@ -180,16 +182,22 @@ export default function VenueDesignerPanel({
         <div className="designer-section-title"><strong>Optional blueprint tracing</strong><span>Manual drawing supported</span></div>
         <p className="designer-small-copy">Upload a map only as a faint locked reference. You can ignore obstacles and manually draw only the seating areas and useful landmarks.</p>
         <button type="button" className="workspace-secondary-action" disabled={!canManage || layoutLocked} onClick={() => blueprintInputRef.current?.click()}><ImagePlus size={14} /> Import blueprint image</button>
-        <input ref={blueprintInputRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={handleBlueprint} />
+        <input ref={blueprintInputRef} hidden type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" onChange={handleBlueprint} />
         {blueprint?.dataUrl && (
           <div className="blueprint-controls">
             <label><span>Opacity</span><input type="range" min="0.05" max="0.8" step="0.05" value={blueprint.opacity ?? 0.28} onChange={(event) => onBlueprintChange?.({ opacity: Number(event.target.value) })} /></label>
             <label className="designer-check-row"><input type="checkbox" checked={blueprint.visible !== false} onChange={(event) => onBlueprintChange?.({ visible: event.target.checked })} />Show blueprint</label>
             <button type="button" className={blueprintEditMode ? "active" : ""} onClick={onToggleBlueprintEditMode} disabled={!canManage || layoutLocked}>{blueprintEditMode ? "Done moving/resizing" : "Move & resize"}</button>
-            {blueprintEditMode && <p className="designer-small-copy">Drag the image to move it, or drag the purple handle at its corner to resize. Especially useful on huge canvases (Gateway/Aloha) where the image doesn't match the workspace size.</p>}
+            {blueprintEditMode && <p className="designer-small-copy">Drag the image to move it, drag the top handle to rotate, or drag the corner handle to resize. Especially useful on huge canvases (Gateway/Aloha) where the image doesn't match the workspace size.</p>}
             <div className="blueprint-position-row">
               <button type="button" onClick={centerBlueprint} disabled={!canManage || layoutLocked}>Center</button>
               <button type="button" onClick={fitBlueprintToCanvas} disabled={!canManage || layoutLocked}><Maximize2 size={13} /> Fit to canvas</button>
+            </div>
+            <label><span>Rotation</span><input type="number" value={Math.round(blueprint.rotate || 0)} disabled={!canManage || layoutLocked} onChange={(event) => onBlueprintChange?.({ rotate: Number(event.target.value) || 0 })} /></label>
+            <div className="blueprint-rotate-row">
+              <button type="button" onClick={() => rotateBlueprintBy(-90)} disabled={!canManage || layoutLocked}><RotateCcw size={13} /> -90°</button>
+              <button type="button" onClick={() => rotateBlueprintBy(90)} disabled={!canManage || layoutLocked}><RotateCw size={13} /> +90°</button>
+              <button type="button" onClick={() => onBlueprintChange?.({ rotate: 0 })} disabled={!canManage || layoutLocked}>Reset</button>
             </div>
             <button type="button" onClick={() => onBlueprintChange?.({ dataUrl: null })}>Remove image</button>
           </div>
