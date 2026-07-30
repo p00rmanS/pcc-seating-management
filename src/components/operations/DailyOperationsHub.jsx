@@ -32,7 +32,14 @@ import {
   subscribeToDailyOperations,
   subscribeToOperationsSettings,
 } from "../../services/firebase/realtimeSync";
+import { getAssignmentGroupColors } from "../../utils/assignmentColors";
 
+const DEFAULT_ASSIGNMENT_AREAS = ["Line 1", "Line 2", "Imu", "Fish", "Panner", "Smoothies", "Dismissing", "Greeter", "Off"];
+const DEFAULT_ASSIGNMENT_TIMES = ["3:00pm", "3:15pm", "3:30pm", "3:45pm", "4:00pm", "4:15pm", "4:30pm", "4:45pm", "5:00pm", "5:30pm", "6:00pm"];
+const DEFAULT_ASSIGNMENT_DUTIES = [
+  "Setup Salad Station", "Fruit Station & Hot Line", "Imu Pig Carver", "Fish Carver",
+  "Tongs & Utensils", "Cups & Decanters", "Wipe Down Stations Doors & BOH Floors", "Floors",
+];
 const DEFAULT_CLOTHS = [
   "Table Cloth", "Rounds", "Skirt", "Towels", "Beige", "Napkin - Purple",
   "Napkin - Pink", "Dark Beige", "Napkin - Dark Pink", "Napkin Flower Pink", "Tan", "Others",
@@ -361,6 +368,10 @@ export default function DailyOperationsHub({
   const [newItem, setNewItem] = useState("");
   const [assignmentRemarksId, setAssignmentRemarksId] = useState(null);
   const [assignmentRemarksDraft, setAssignmentRemarksDraft] = useState("");
+  const [newAssignmentArea, setNewAssignmentArea] = useState("");
+  const [newAssignmentTime, setNewAssignmentTime] = useState("");
+  const [newAssignmentDuty, setNewAssignmentDuty] = useState("");
+  const [showAssignmentOptionEditor, setShowAssignmentOptionEditor] = useState(false);
   const [newFlavorName, setNewFlavorName] = useState("");
   const [newFlavorUnit, setNewFlavorUnit] = useState("tubs");
   const [newBreakoutName, setNewBreakoutName] = useState("");
@@ -404,6 +415,17 @@ export default function DailyOperationsHub({
 
   const clothItems = normalizeList(settings?.clothItems, DEFAULT_CLOTHS);
   const leiItems = normalizeList(settings?.leiItems, DEFAULT_LEIS);
+  const assignmentAreas = normalizeList(settings?.assignmentAreas, DEFAULT_ASSIGNMENT_AREAS);
+  const assignmentTimes = normalizeList(settings?.assignmentTimes, DEFAULT_ASSIGNMENT_TIMES);
+  const assignmentDuties = normalizeList(settings?.assignmentDuties, DEFAULT_ASSIGNMENT_DUTIES);
+  const addAssignmentOption = async (key, list, value, resetValue) => {
+    const clean = value.trim();
+    if (!clean || list.some((item) => item.toLowerCase() === clean.toLowerCase())) return;
+    await saveOperationsSettings(venueId, { [key]: [...list, clean] }, { uid: profile?.uid, name: profile?.displayName });
+    resetValue("");
+  };
+  const removeAssignmentOption = (key, list, value) =>
+    saveOperationsSettings(venueId, { [key]: list.filter((item) => item !== value) }, { uid: profile?.uid, name: profile?.displayName });
   const frozenConfig = useMemo(
     () => normalizeFlavorConfig(settings?.frozenItems, DEFAULT_FROZEN[venueId] || DEFAULT_FROZEN.ohana),
     [settings?.frozenItems, venueId]
@@ -853,22 +875,77 @@ export default function DailyOperationsHub({
       <div className="ops-tabs">{tabs.map(([id,label,Icon]) => <button type="button" key={id} className={activeTab===id?"active":""} onClick={() => setActiveTab(id)}><Icon size={15}/><span>{label}</span></button>)}</div>
 
       {activeTab === "assignments" && <section className="ops-panel">
-        <div className="ops-panel-heading"><div><h3>Today’s Assignment</h3><p>Operational employees can see this list. Managers can add or remove assignments.</p></div>{canManageStaffing && <button type="button" className="ops-primary" onClick={onSaveStaffing}><Save size={14}/>{staffingSaveState === "saving" ? "Saving…" : "Save"}</button>}</div>
+        <div className="ops-panel-heading">
+          <div><h3>Today’s Assignment</h3><p>Operational employees can see this list. Managers can add or remove assignments.</p></div>
+          <div className="ops-assignment-heading-actions">
+            {canManageStaffing && <button type="button" className="ops-secondary" onClick={() => setShowAssignmentOptionEditor((value) => !value)}>{showAssignmentOptionEditor ? "Hide options" : "Manage options"}</button>}
+            {canManageStaffing && <button type="button" className="ops-primary" onClick={onSaveStaffing}><Save size={14}/>{staffingSaveState === "saving" ? "Saving…" : "Save"}</button>}
+          </div>
+        </div>
+
+        <datalist id="ops-assignment-area-options">{assignmentAreas.map((area) => <option key={area} value={area} />)}</datalist>
+        <datalist id="ops-assignment-time-options">{assignmentTimes.map((time) => <option key={time} value={time} />)}</datalist>
+        <datalist id="ops-assignment-duty-options">{assignmentDuties.map((duty) => <option key={duty} value={duty} />)}</datalist>
+
+        {canManageStaffing && showAssignmentOptionEditor && (
+          <div className="ops-assignment-option-editor">
+            {[
+              ["Areas", assignmentAreas, "assignmentAreas", newAssignmentArea, setNewAssignmentArea, "e.g. Line 1, Imu, Fish"],
+              ["Times", assignmentTimes, "assignmentTimes", newAssignmentTime, setNewAssignmentTime, "e.g. 4:30pm"],
+              ["Duties", assignmentDuties, "assignmentDuties", newAssignmentDuty, setNewAssignmentDuty, "e.g. Setup Salad Station"],
+            ].map(([label, list, key, value, setValue, placeholder]) => (
+              <div className="ops-assignment-option-group" key={key}>
+                <span className="ops-assignment-option-label">{label}</span>
+                <div className="ops-assignment-option-chips">
+                  {list.map((item) => (
+                    <span className="ops-assignment-option-chip" key={item}>
+                      {item}
+                      <button type="button" onClick={() => removeAssignmentOption(key, list, item)}><X size={11}/></button>
+                    </span>
+                  ))}
+                </div>
+                <div className="ops-inline-add">
+                  <input value={value} placeholder={placeholder} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") addAssignmentOption(key, list, value, setValue); }} />
+                  <button type="button" onClick={() => addAssignmentOption(key, list, value, setValue)}><Plus size={14}/> Add</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="ops-assignment-grid">
           {Object.entries(staffingAssignments || {}).length === 0 && <div className="ops-empty">No assignments have been posted for this date.</div>}
           {Object.entries(staffingAssignments || {}).map(([id, value]) => {
             const hasRemarks = Boolean((value.notes || "").trim());
+            const groupColors = getAssignmentGroupColors(value.group);
+            const cardStyle = groupColors ? { background: groupColors.bg, borderColor: groupColors.border } : undefined;
             return (
-              <div className="ops-assignment-card" key={id}>
+              <div className="ops-assignment-card" style={cardStyle} key={id}>
                 <div className="ops-assignment-card-top">
-                  <input disabled={!canManageStaffing} className="ops-assignment-station" value={value.position || value.assignment || value.areaName || ""} placeholder="Station / assignment" onChange={(event) => onChangeAssignment(id, {...value, position:event.target.value, assignment:event.target.value, areaName:event.target.value})}/>
+                  <input
+                    disabled={!canManageStaffing}
+                    list="ops-assignment-area-options"
+                    className="ops-assignment-group"
+                    style={groupColors ? { color: groupColors.text } : undefined}
+                    value={value.group || ""}
+                    placeholder="Area (e.g. Line 1, Imu, Fish)"
+                    onChange={(event) => onChangeAssignment(id, {...value, group:event.target.value, position:event.target.value, assignment:event.target.value, areaName:event.target.value})}
+                  />
                   {canManageStaffing && <button type="button" className="ops-assignment-remove" onClick={() => onChangeAssignment(id,null)}><Trash2 size={14}/></button>}
                 </div>
                 <input disabled={!canManageStaffing} className="ops-assignment-name" value={value.displayName || ""} placeholder="Employee name" onChange={(event) => onChangeAssignment(id, {...value, displayName:event.target.value})}/>
-                <div className="ops-assignment-time-row">
-                  <label><span>Opening</span><input type="time" disabled={!canManageStaffing} value={value.opening || ""} onChange={(event) => onChangeAssignment(id, {...value, opening:event.target.value})}/></label>
-                  <label><span>Closing</span><input type="time" disabled={!canManageStaffing} value={value.closing || ""} onChange={(event) => onChangeAssignment(id, {...value, closing:event.target.value})}/></label>
-                </div>
+                <label className="ops-assignment-duty-field">
+                  <span>Time</span>
+                  <input disabled={!canManageStaffing} list="ops-assignment-time-options" value={value.time || ""} placeholder="e.g. 3:45pm" onChange={(event) => onChangeAssignment(id, {...value, time:event.target.value})}/>
+                </label>
+                <label className="ops-assignment-duty-field">
+                  <span>Opening duty</span>
+                  <input disabled={!canManageStaffing} list="ops-assignment-duty-options" value={value.opening || ""} placeholder="e.g. Setup Salad Station" onChange={(event) => onChangeAssignment(id, {...value, opening:event.target.value})}/>
+                </label>
+                <label className="ops-assignment-duty-field">
+                  <span>Closing duty</span>
+                  <input disabled={!canManageStaffing} list="ops-assignment-duty-options" value={value.closing || ""} placeholder="e.g. Tongs & Utensils" onChange={(event) => onChangeAssignment(id, {...value, closing:event.target.value})}/>
+                </label>
                 <button type="button" className={`ops-assignment-remarks-button ${hasRemarks ? "has-remarks" : ""}`} onClick={() => openAssignmentRemarks(id)}>
                   {hasRemarks ? <em>{value.notes.slice(0, 60)}{value.notes.length > 60 ? "…" : ""}</em> : "+ Add remarks / SOP note"}
                 </button>

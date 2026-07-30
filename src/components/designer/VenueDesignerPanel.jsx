@@ -188,7 +188,7 @@ export default function VenueDesignerPanel({
             <label><span>Opacity</span><input type="range" min="0.05" max="0.8" step="0.05" value={blueprint.opacity ?? 0.28} onChange={(event) => onBlueprintChange?.({ opacity: Number(event.target.value) })} /></label>
             <label className="designer-check-row"><input type="checkbox" checked={blueprint.visible !== false} onChange={(event) => onBlueprintChange?.({ visible: event.target.checked })} />Show blueprint</label>
             <button type="button" className={blueprintEditMode ? "active" : ""} onClick={onToggleBlueprintEditMode} disabled={!canManage || layoutLocked}>{blueprintEditMode ? "Done moving/resizing" : "Move & resize"}</button>
-            {blueprintEditMode && <p className="designer-small-copy">Drag the image to move it, drag the top handle to rotate, or drag the corner handle to resize. Especially useful on huge canvases (Gateway/Aloha) where the image doesn't match the workspace size.</p>}
+            {blueprintEditMode && <p className="designer-small-copy">Drag the image to move it, drag the top handle to rotate, or drag the corner handle to resize. Right-click the image for quick actions, or use keyboard shortcuts: R to rotate 90° (Shift+R to rotate the other way), arrow keys to nudge, Delete to remove, Escape to exit. Especially useful on huge canvases (Gateway/Aloha) where the image doesn't match the workspace size.</p>}
             <div className="blueprint-position-row">
               <button type="button" onClick={centerBlueprint} disabled={!canManage || layoutLocked}>Center</button>
               <button type="button" onClick={fitBlueprintToCanvas} disabled={!canManage || layoutLocked}><Maximize2 size={13} /> Fit to canvas</button>

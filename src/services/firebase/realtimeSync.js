@@ -182,6 +182,29 @@ export async function fetchVenueStaffing(venueId, date) {
   return snapshot.val() || null;
 }
 
+// Weekly area-by-day staffing schedule (rows = seating areas + custom rows
+// like "Smoothies"/"Off", columns = the 7 days of that week) — the in-app
+// replacement for the manually-typed weekly Excel sheet.
+export function subscribeToWeeklySchedule(venueId, weekStart, onData, onError) {
+  if (!venueId || !weekStart) return () => {};
+  return onValue(
+    ref(db, `${ROOT_PATH}/venues/${venueId}/weeklySchedules/${weekStart}`),
+    (snapshot) => onData(snapshot.val() || null),
+    onError
+  );
+}
+
+export async function saveWeeklySchedule(venueId, weekStart, schedule, metadata = {}) {
+  if (!venueId || !weekStart) throw new Error("Venue and week are required.");
+  await set(ref(db, `${ROOT_PATH}/venues/${venueId}/weeklySchedules/${weekStart}`), {
+    rows: schedule?.rows || [],
+    assignments: schedule?.assignments || {},
+    updatedAt: serverTimestamp(),
+    updatedByUid: metadata.uid || null,
+    updatedByName: metadata.name || null,
+  });
+}
+
 export function subscribeToOperationsSettings(venueId, onData, onError) {
   if (!venueId) return () => {};
   return onValue(

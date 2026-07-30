@@ -45,6 +45,7 @@ import {
   Minus,
   Maximize2,
   ShieldCheck,
+  RotateCcw,
   RotateCw,
   Copy,
   Unlock,
@@ -551,7 +552,7 @@ function EditableArea({
   );
 }
 
-function BlueprintOverlay({ blueprint, canvasWidth, canvasHeight, editMode, zoom, onChange, onRequestCanvasExpand }) {
+function BlueprintOverlay({ blueprint, canvasWidth, canvasHeight, editMode, zoom, onChange, onRequestCanvasExpand, onOpenContextMenu }) {
   const interactionRef = useRef(null);
   if (!blueprint?.dataUrl || blueprint.visible === false) return null;
 
@@ -598,6 +599,12 @@ function BlueprintOverlay({ blueprint, canvasWidth, canvasHeight, editMode, zoom
     if (interactionRef.current) event.currentTarget.releasePointerCapture?.(event.pointerId);
     interactionRef.current = null;
   };
+  const handleContextMenu = (event) => {
+    if (!editMode) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onOpenContextMenu?.({ x: event.clientX, y: event.clientY });
+  };
 
   return (
     <div
@@ -607,7 +614,8 @@ function BlueprintOverlay({ blueprint, canvasWidth, canvasHeight, editMode, zoom
       onPointerMove={handleMove}
       onPointerUp={endInteraction}
       onPointerCancel={endInteraction}
-      title={editMode ? "Drag to move · drag the corner handle to resize · drag the top handle to rotate" : undefined}
+      onContextMenu={handleContextMenu}
+      title={editMode ? "Drag to move · drag the corner handle to resize · drag the top handle to rotate · right-click for more options" : undefined}
     >
       <img className="venue-blueprint-overlay" src={blueprint.dataUrl} alt="Imported venue blueprint" style={{ opacity: blueprint.opacity ?? 0.35 }} draggable="false" />
       {editMode && (
@@ -1568,6 +1576,7 @@ function FloorPlanCanvas({
   blueprint,
   blueprintEditMode = false,
   onBlueprintChange,
+  onBlueprintContextMenu,
   onBeginTableMove,
   onEndTableMove,
   onBeginAreaInteraction,
@@ -1741,6 +1750,7 @@ function FloorPlanCanvas({
               zoom={zoom}
               onChange={onBlueprintChange}
               onRequestCanvasExpand={onRequestCanvasExpand}
+              onOpenContextMenu={onBlueprintContextMenu}
             />
             {areas.map((area) => (
               <EditableArea
@@ -2248,6 +2258,7 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
   const [fullFloorToolsOpen, setFullFloorToolsOpen] = useState(false);
   const [fullFloorInspectorOpen, setFullFloorInspectorOpen] = useState(false);
   const [tableContextMenu, setTableContextMenu] = useState(null);
+  const [blueprintContextMenu, setBlueprintContextMenu] = useState(null);
   const [contextAssignOpen, setContextAssignOpen] = useState(false);
   const [combineSourceId, setCombineSourceId] = useState(null);
   const canvasViewportRef = useRef({ scrollLeft: 0, scrollTop: 0, width: 900, height: 600 });
@@ -2659,8 +2670,12 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
     setSelectedTableId(id);
     setSelectedTableIds([id]);
     if (mobileFocusMode) setMobileInspectorOpen(true);
-    if (operationsView) setFullFloorInspectorOpen(true);
-  }, [bulkSelectMode, mobileFocusMode, operationsView]);
+    // Full Floor used to force the Inspector open on every single table tap,
+    // which made quick taps/right-clicks during live service (trackpad users
+    // especially) feel like the drawer was "popping up every time". Selecting
+    // a table still highlights it; staff open the Inspector explicitly via
+    // the Edit button or the context menu when they actually want it.
+  }, [bulkSelectMode, mobileFocusMode]);
 
   const clearTableSelection = useCallback(() => {
     setSelectedTableId(null);
@@ -2796,7 +2811,7 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") { event.preventDefault(); selectAllTables(); }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c" && selectedTableIds.length) { event.preventDefault(); copySelectedTables(); }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") { event.preventDefault(); pasteSelectedTables(); }
-      if (event.key === "Escape") { clearTableSelection(); setBulkSelectMode(false); }
+      if (event.key === "Escape") { clearTableSelection(); setBulkSelectMode(false); if (blueprintEditMode) setBlueprintEditMode(false); }
       if ((event.key === "Delete" || event.key === "Backspace") && selectedTableIds.length) { event.preventDefault(); deleteSelectedTables(); }
       if (permissions.canMoveTables && selectedTableIds.length && ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) {
         event.preventDefault();
@@ -2809,9 +2824,31 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
           ? { ...table, pos: { x: Math.max(0, table.pos.x + dx), y: Math.max(0, table.pos.y + dy) } }
           : table));
       }
+      // Blueprint shortcuts only kick in while its edit mode is on and no table
+      // is selected, so they never fight with the table shortcuts just above.
+      if (isLeadOrAdmin && blueprintEditMode && !selectedTableIds.length) {
+        const blueprint = blueprintsByR[activeRid];
+        if (blueprint?.dataUrl) {
+          if (event.key.toLowerCase() === "r") {
+            event.preventDefault();
+            const delta = event.shiftKey ? -90 : 90;
+            updateBlueprint({ rotate: Math.round(((blueprint.rotate || 0) + delta + 360) % 360) });
+          } else if (event.key === "Delete" || event.key === "Backspace") {
+            event.preventDefault();
+            updateBlueprint({ dataUrl: null });
+            setBlueprintEditMode(false);
+          } else if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) {
+            event.preventDefault();
+            const step = event.shiftKey ? 20 : 5;
+            const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+            const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+            updateBlueprint({ x: Math.max(0, (blueprint.x || 0) + dx), y: Math.max(0, (blueprint.y || 0) + dy) });
+          }
+        }
+      }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  }, [undo, redo, selectAllTables, clearTableSelection, deleteSelectedTables, selectedTableIds, pushHistory, setTables, copySelectedTables, pasteSelectedTables, permissions.canMoveTables]);
+  }, [undo, redo, selectAllTables, clearTableSelection, deleteSelectedTables, selectedTableIds, pushHistory, setTables, copySelectedTables, pasteSelectedTables, permissions.canMoveTables, isLeadOrAdmin, blueprintEditMode, blueprintsByR, activeRid, updateBlueprint]);
 
   useEffect(() => {
     if (!safeSnapshotRef.current) safeSnapshotRef.current = captureVenueSnapshot();
@@ -3186,6 +3223,14 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
     setTableContextMenu({ tableId, x, y });
   }, [tables, permissions.canOpenTableContextMenu]);
 
+  const openBlueprintContextMenu = useCallback((point) => {
+    if (!isLeadOrAdmin) return;
+    const width = 220, height = 300;
+    const x = Math.max(8, Math.min((point?.x || 20), window.innerWidth - width - 8));
+    const y = Math.max(8, Math.min((point?.y || 20), window.innerHeight - height - 8));
+    setBlueprintContextMenu({ x, y });
+  }, [isLeadOrAdmin]);
+
   const startCombineWith = useCallback((id) => {
     setCombineSourceId(id);
     setTableContextMenu(null);
@@ -3330,7 +3375,23 @@ const toggleAreaEditMode = useCallback(() => {
   const zoomIn = () => setZoom(clampWorkspaceZoom(zoom + 0.1));
   const zoomOut = () => setZoom(clampWorkspaceZoom(zoom - 0.1));
   const resetZoom = () => setZoom(clampWorkspaceZoom(1));
-  const fitZoom = () => setZoom(clampWorkspaceZoom(layoutConfig.defaultZoom));
+  // Actually fits the canvas (and whatever's on it — including an uploaded
+  // blueprint sized to match) into the real, current viewport, instead of
+  // just resetting to the venue's fixed default zoom. That fixed reset was
+  // why a big uploaded image needed the whole browser window shrunk to be
+  // seen in full: the "Fit" button wasn't computing anything, it was a
+  // hardcoded percentage unrelated to how much screen space was available.
+  const fitZoom = () => {
+    const viewport = canvasViewportRef.current || {};
+    const viewportWidth = Number(viewport.width) || (typeof window !== "undefined" ? window.innerWidth : 900);
+    const viewportHeight = Number(viewport.height) || (typeof window !== "undefined" ? window.innerHeight : 600);
+    const padding = 40;
+    const fitRatio = Math.min(
+      (viewportWidth - padding) / layoutConfig.canvasWidth,
+      (viewportHeight - padding) / layoutConfig.canvasHeight
+    );
+    setZoom(clampWorkspaceZoom(fitRatio > 0 ? fitRatio : layoutConfig.defaultZoom));
+  };
 
   const seatingMetrics = useMemo(() => {
     const visibleTables = tables.filter((table) => !(table.childIds && table.childIds.length));
@@ -3776,9 +3837,9 @@ const toggleAreaEditMode = useCallback(() => {
 
   useEffect(() => {
     const closeMenus = (event) => {
-      if (event.key === "Escape") { setTableContextMenu(null); setCombineSourceId(null); }
+      if (event.key === "Escape") { setTableContextMenu(null); setCombineSourceId(null); setBlueprintContextMenu(null); }
     };
-    const dismiss = () => setTableContextMenu(null);
+    const dismiss = () => { setTableContextMenu(null); setBlueprintContextMenu(null); };
     window.addEventListener("keydown", closeMenus);
     window.addEventListener("pointerdown", dismiss);
     return () => { window.removeEventListener("keydown", closeMenus); window.removeEventListener("pointerdown", dismiss); };
@@ -4097,6 +4158,7 @@ const toggleAreaEditMode = useCallback(() => {
 
           {activeTool === "staffing" && (
             <DailyStaffingPanel
+              venueId={activeRid}
               venueName={layoutConfig.name}
               date={staffingDate}
               onDateChange={setStaffingDate}
@@ -4164,7 +4226,21 @@ const toggleAreaEditMode = useCallback(() => {
             {!greeterView && <button type="button" className={serversDashboardOpen ? "active" : ""} onClick={() => setServersDashboardOpen((value) => !value)} title="Show or hide the servers dashboard"><Users size={16}/><span>{serversDashboardOpen ? "Hide servers" : "Servers"}</span></button>}
             {!greeterView && <button type="button" className={mobileFocusMode ? "active" : ""} onClick={() => setMobileFocusMode((value) => !value)} title="Phone and tablet map mode"><Smartphone size={16}/><span>{mobileFocusMode ? "Show controls" : "Mobile map"}</span></button>}
             {activeRid === "gateway" && <button type="button" className={greeterView ? "active" : ""} onClick={() => setGreeterView((value) => !value)} title="Gateway greeter dashboard"><LayoutDashboard size={16}/><span>{greeterView ? "Floor map" : "Greeter"}</span></button>}
-            {!mobileFocusMode && !greeterView && <button type="button" className={operationsView ? "active" : ""} onClick={() => setOperationsView((value) => { const next = !value; if (next) { setFullFloorToolsOpen(false); setFullFloorInspectorOpen(Boolean(selectedTableId)); } return next; })} title="Large floor operations view">{operationsView ? <Minimize2 size={16} /> : <Maximize2 size={16} />} <span>{operationsView ? "Exit focus" : "Full floor"}</span></button>}
+            {!mobileFocusMode && !greeterView && <button type="button" className={operationsView ? "active" : ""} onClick={() => setOperationsView((value) => {
+              const next = !value;
+              if (next) {
+                setFullFloorToolsOpen(false);
+                setFullFloorInspectorOpen(Boolean(selectedTableId));
+                // The sidebar/inspector columns disappear when entering Full
+                // Floor, changing the canvas viewport's real size. Re-fit once
+                // the browser has actually laid that out (next paint), rather
+                // than leaving whatever zoom/scroll was set for the old,
+                // narrower viewport — that mismatch is what could show up
+                // blank until something else forced a re-render.
+                requestAnimationFrame(() => requestAnimationFrame(() => fitZoom()));
+              }
+              return next;
+            })} title="Large floor operations view">{operationsView ? <Minimize2 size={16} /> : <Maximize2 size={16} />} <span>{operationsView ? "Exit focus" : "Full floor"}</span></button>}
           </div>
           {greeterView ? (
             <GatewayGreeterDashboard
@@ -4255,6 +4331,7 @@ const toggleAreaEditMode = useCallback(() => {
             blueprint={blueprintsByR[activeRid]}
             blueprintEditMode={blueprintEditMode}
             onBlueprintChange={updateBlueprint}
+            onBlueprintContextMenu={openBlueprintContextMenu}
             onBeginTableMove={pushHistory}
             onEndTableMove={checkTableOverlapAfterMove}
             onBeginAreaInteraction={pushHistory}
@@ -4368,6 +4445,19 @@ const toggleAreaEditMode = useCallback(() => {
         )}
         {permissions.canDeleteTables && <button type="button" className="context-danger" onClick={() => { const id=selectedTable.id; setTableContextMenu(null); deleteTable(id); }}><Trash2 size={15}/> Delete Table</button>}
       </div>}
+
+      {blueprintContextMenu && blueprintsByR[activeRid]?.dataUrl && (
+        <div className="table-context-menu" style={{ left: blueprintContextMenu.x, top: blueprintContextMenu.y }} role="menu" onPointerDown={(event) => event.stopPropagation()}>
+          <div className="table-context-header"><div><strong>Blueprint</strong><span>{Math.round(blueprintsByR[activeRid]?.rotate || 0)}° rotation</span></div><button type="button" onClick={() => setBlueprintContextMenu(null)}><X size={16}/></button></div>
+          <button type="button" onClick={() => updateBlueprint({ rotate: Math.round(((blueprintsByR[activeRid]?.rotate || 0) - 90 + 360) % 360) })}><RotateCcw size={15}/> Rotate -90°</button>
+          <button type="button" onClick={() => updateBlueprint({ rotate: Math.round(((blueprintsByR[activeRid]?.rotate || 0) + 90) % 360) })}><RotateCw size={15}/> Rotate +90°</button>
+          <button type="button" onClick={() => updateBlueprint({ rotate: 0 })}>Reset rotation</button>
+          <button type="button" onClick={() => updateBlueprint({ x: Math.max(0, (layoutConfig.canvasWidth - (blueprintsByR[activeRid]?.width || layoutConfig.canvasWidth)) / 2), y: Math.max(0, (layoutConfig.canvasHeight - (blueprintsByR[activeRid]?.height || layoutConfig.canvasHeight)) / 2) })}>Center</button>
+          <button type="button" onClick={() => updateBlueprint({ x: 0, y: 0, width: layoutConfig.canvasWidth, height: layoutConfig.canvasHeight })}><Maximize2 size={15}/> Fit to canvas</button>
+          <button type="button" onClick={() => updateBlueprint({ visible: blueprintsByR[activeRid]?.visible === false })}>{blueprintsByR[activeRid]?.visible === false ? <Eye size={15}/> : <EyeOff size={15}/>} {blueprintsByR[activeRid]?.visible === false ? "Show blueprint" : "Hide blueprint"}</button>
+          <button type="button" className="context-danger" onClick={() => { updateBlueprint({ dataUrl: null }); setBlueprintContextMenu(null); }}><Trash2 size={15}/> Remove Blueprint</button>
+        </div>
+      )}
 
       {accountModalOpen && (
         <AccountSecurityModal
