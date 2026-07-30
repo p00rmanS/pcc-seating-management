@@ -579,11 +579,26 @@ function BlueprintOverlay({ blueprint, canvasWidth, canvasHeight, editMode, zoom
       const nextY = Math.max(0, interaction.origY + dy);
       onRequestCanvasExpand?.(nextX + width + 400, nextY + height + 400);
       onChange({ x: nextX, y: nextY });
-    } else if (interaction.mode === "resize") {
-      const nextWidth = Math.max(120, interaction.origW + dx);
-      const nextHeight = Math.max(120, interaction.origH + dy);
-      onRequestCanvasExpand?.(x + nextWidth + 400, y + nextHeight + 400);
-      onChange({ width: nextWidth, height: nextHeight });
+    } else if (interaction.mode.startsWith("resize-")) {
+      const corner = interaction.mode.slice("resize-".length); // "br" | "bl" | "tr" | "tl"
+      const growsRight = corner === "br" || corner === "tr";
+      const growsDown = corner === "br" || corner === "bl";
+      // Free (independent width/height) size the dragged corner would produce —
+      // used as-is when Shift is held, or as the basis for a proportional scale
+      // otherwise so dragging can't accidentally warp the image.
+      const freeWidth = Math.max(120, interaction.origW + (growsRight ? dx : -dx));
+      const freeHeight = Math.max(120, interaction.origH + (growsDown ? dy : -dy));
+      let nextWidth = freeWidth;
+      let nextHeight = freeHeight;
+      if (!event.shiftKey) {
+        const scale = Math.max(0.1, (freeWidth / interaction.origW + freeHeight / interaction.origH) / 2);
+        nextWidth = Math.max(120, interaction.origW * scale);
+        nextHeight = Math.max(120, interaction.origH * scale);
+      }
+      const nextX = growsRight ? interaction.origX : interaction.origX + interaction.origW - nextWidth;
+      const nextY = growsDown ? interaction.origY : interaction.origY + interaction.origH - nextHeight;
+      onRequestCanvasExpand?.(nextX + nextWidth + 400, nextY + nextHeight + 400);
+      onChange({ x: Math.max(0, nextX), y: Math.max(0, nextY), width: nextWidth, height: nextHeight });
     } else if (interaction.mode === "rotate") {
       const centerX = interaction.origX + interaction.origW / 2;
       const centerY = interaction.origY + interaction.origH / 2;
@@ -615,7 +630,7 @@ function BlueprintOverlay({ blueprint, canvasWidth, canvasHeight, editMode, zoom
       onPointerUp={endInteraction}
       onPointerCancel={endInteraction}
       onContextMenu={handleContextMenu}
-      title={editMode ? "Drag to move · drag the corner handle to resize · drag the top handle to rotate · right-click for more options" : undefined}
+      title={editMode ? "Drag to move · drag a corner to resize (proportional — hold Shift to stretch freely) · drag the top handle to rotate · right-click for more options" : undefined}
     >
       <img className="venue-blueprint-overlay" src={blueprint.dataUrl} alt="Imported venue blueprint" style={{ opacity: blueprint.opacity ?? 0.35 }} draggable="false" />
       {editMode && (
@@ -632,17 +647,21 @@ function BlueprintOverlay({ blueprint, canvasWidth, canvasHeight, editMode, zoom
           >
             <RotateCw size={11} />
           </button>
-          <button
-            type="button"
-            className="blueprint-resize-handle"
-            aria-label="Resize blueprint"
-            onPointerDown={(event) => beginInteraction(event, "resize")}
-            onPointerMove={handleMove}
-            onPointerUp={endInteraction}
-            onPointerCancel={endInteraction}
-          >
-            <Maximize2 size={11} />
-          </button>
+          {["tl", "tr", "bl", "br"].map((corner) => (
+            <button
+              key={corner}
+              type="button"
+              className={`blueprint-resize-handle blueprint-resize-${corner}`}
+              aria-label={`Resize blueprint from the ${corner === "tl" ? "top-left" : corner === "tr" ? "top-right" : corner === "bl" ? "bottom-left" : "bottom-right"}`}
+              title="Drag to resize (proportional) — hold Shift to stretch freely"
+              onPointerDown={(event) => beginInteraction(event, `resize-${corner}`)}
+              onPointerMove={handleMove}
+              onPointerUp={endInteraction}
+              onPointerCancel={endInteraction}
+            >
+              <Maximize2 size={10} />
+            </button>
+          ))}
         </>
       )}
     </div>

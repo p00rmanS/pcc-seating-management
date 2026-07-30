@@ -559,8 +559,6 @@
 }
 .blueprint-resize-handle {
   position: absolute;
-  right: -9px;
-  bottom: -9px;
   width: 22px;
   height: 22px;
   border-radius: 50%;
@@ -572,7 +570,12 @@
   cursor: nwse-resize;
   box-shadow: 0 3px 8px rgba(15, 23, 42, 0.3);
   touch-action: none;
+  pointer-events: auto;
 }
+.blueprint-resize-tl { left: -11px; top: -11px; cursor: nwse-resize; }
+.blueprint-resize-br { right: -11px; bottom: -11px; cursor: nwse-resize; }
+.blueprint-resize-tr { right: -11px; top: -11px; cursor: nesw-resize; }
+.blueprint-resize-bl { left: -11px; bottom: -11px; cursor: nesw-resize; }
 .blueprint-rotate-handle {
   position: absolute;
   left: 50%;
@@ -703,6 +706,11 @@
 .blueprint-position-row button { display: flex; align-items: center; justify-content: center; gap: 5px; }
 .blueprint-rotate-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
 .blueprint-rotate-row button { display: flex; align-items: center; justify-content: center; gap: 5px; }
+.blueprint-size-row { display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px; align-items: end; }
+.blueprint-size-row label { display: grid; gap: 4px; color: #6b4d15; font-size: 11px; font-weight: 700; }
+.blueprint-size-row input { width: 100%; border: 1px solid #ead3a3; border-radius: 8px; padding: 7px 8px; font-size: 12px; font-weight: 700; color: #4a3407; background: #fff; }
+.blueprint-lock-aspect { display: flex; align-items: center; justify-content: center; padding: 8px !important; }
+.blueprint-size-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 
 .operations-dashboard {
   display: grid;

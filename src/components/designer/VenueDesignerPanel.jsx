@@ -7,6 +7,8 @@ import {
   HelpCircle,
   ImagePlus,
   Layers3,
+  Link2,
+  Link2Off,
   Maximize2,
   RotateCcw,
   RotateCw,
@@ -17,6 +19,13 @@ import {
   Upload,
   X,
 } from "lucide-react";
+
+const BLUEPRINT_SIZE_PRESETS = [
+  ["Small", 0.3],
+  ["Medium", 0.5],
+  ["Large", 0.75],
+  ["XL", 1],
+];
 
 const TABLE_TYPES = [
   ["regular", "Regular"],
@@ -83,6 +92,7 @@ export default function VenueDesignerPanel({
   const [message, setMessage] = useState("");
   const [modal, setModal] = useState(null);
   const [canvasDraft, setCanvasDraft] = useState({ width: canvasWidth, height: canvasHeight });
+  const [lockBlueprintAspect, setLockBlueprintAspect] = useState(true);
 
   useEffect(() => { if (selectedAreaId) setForm((current) => ({ ...current, areaId: selectedAreaId })); }, [selectedAreaId]);
   useEffect(() => setCanvasDraft({ width: canvasWidth, height: canvasHeight }), [canvasWidth, canvasHeight]);
@@ -154,6 +164,45 @@ export default function VenueDesignerPanel({
   const fitBlueprintToCanvas = () => onBlueprintChange?.({ x: 0, y: 0, width: canvasWidth, height: canvasHeight });
   const rotateBlueprintBy = (delta) => onBlueprintChange?.({ rotate: Math.round(((blueprint?.rotate || 0) + delta + 360) % 360) });
 
+  // Presets keep the blueprint's current proportions (unlike "Fit to canvas",
+  // which stretches to match the canvas exactly) and size it against the
+  // canvas's shorter side, centered — a fast, predictable alternative to
+  // dragging a resize handle by hand.
+  const applyBlueprintSizePreset = (fraction) => {
+    const currentWidth = blueprint?.width || canvasWidth;
+    const currentHeight = blueprint?.height || canvasHeight;
+    const ratio = currentHeight > 0 ? currentWidth / currentHeight : 1;
+    const targetSide = Math.min(canvasWidth, canvasHeight) * fraction;
+    const nextWidth = Math.max(60, ratio >= 1 ? targetSide : targetSide * ratio);
+    const nextHeight = Math.max(60, ratio >= 1 ? targetSide / ratio : targetSide);
+    onBlueprintChange?.({
+      width: nextWidth,
+      height: nextHeight,
+      x: Math.max(0, (canvasWidth - nextWidth) / 2),
+      y: Math.max(0, (canvasHeight - nextHeight) / 2),
+    });
+  };
+  const setBlueprintWidth = (nextValue) => {
+    const currentWidth = blueprint?.width || canvasWidth;
+    const currentHeight = blueprint?.height || canvasHeight;
+    const width = Math.max(60, Number(nextValue) || currentWidth);
+    if (lockBlueprintAspect && currentWidth > 0) {
+      onBlueprintChange?.({ width, height: Math.max(60, width * (currentHeight / currentWidth)) });
+    } else {
+      onBlueprintChange?.({ width });
+    }
+  };
+  const setBlueprintHeight = (nextValue) => {
+    const currentWidth = blueprint?.width || canvasWidth;
+    const currentHeight = blueprint?.height || canvasHeight;
+    const height = Math.max(60, Number(nextValue) || currentHeight);
+    if (lockBlueprintAspect && currentHeight > 0) {
+      onBlueprintChange?.({ height, width: Math.max(60, height * (currentWidth / currentHeight)) });
+    } else {
+      onBlueprintChange?.({ height });
+    }
+  };
+
   const applyCanvas = () => {
     onResizeCanvas?.({ width: Math.max(1200, Math.min(200000, Number(canvasDraft.width) || canvasWidth)), height: Math.max(900, Math.min(200000, Number(canvasDraft.height) || canvasHeight)) });
     setMessage("Workspace resized. The canvas also expands automatically when objects approach an edge.");
@@ -188,10 +237,28 @@ export default function VenueDesignerPanel({
             <label><span>Opacity</span><input type="range" min="0.05" max="0.8" step="0.05" value={blueprint.opacity ?? 0.28} onChange={(event) => onBlueprintChange?.({ opacity: Number(event.target.value) })} /></label>
             <label className="designer-check-row"><input type="checkbox" checked={blueprint.visible !== false} onChange={(event) => onBlueprintChange?.({ visible: event.target.checked })} />Show blueprint</label>
             <button type="button" className={blueprintEditMode ? "active" : ""} onClick={onToggleBlueprintEditMode} disabled={!canManage || layoutLocked}>{blueprintEditMode ? "Done moving/resizing" : "Move & resize"}</button>
-            {blueprintEditMode && <p className="designer-small-copy">Drag the image to move it, drag the top handle to rotate, or drag the corner handle to resize. Right-click the image for quick actions, or use keyboard shortcuts: R to rotate 90° (Shift+R to rotate the other way), arrow keys to nudge, Delete to remove, Escape to exit. Especially useful on huge canvases (Gateway/Aloha) where the image doesn't match the workspace size.</p>}
+            {blueprintEditMode && <p className="designer-small-copy">Drag the image to move it, drag the top handle to rotate, or drag any corner to resize — corner drags stay proportional by default (hold Shift to stretch freely). Or skip the mouse: type exact Width/Height below (linked by the chain icon), or use a Small/Medium/Large/XL preset. Right-click the image for quick actions, or use keyboard shortcuts: R to rotate 90° (Shift+R the other way), arrow keys to nudge, Delete to remove, Escape to exit.</p>}
+            <div className="blueprint-size-row">
+              <label><span>Width</span><input type="number" min="60" step="10" value={Math.round(blueprint.width || canvasWidth)} disabled={!canManage || layoutLocked} onChange={(event) => setBlueprintWidth(event.target.value)} /></label>
+              <button
+                type="button"
+                className={`blueprint-lock-aspect ${lockBlueprintAspect ? "active" : ""}`}
+                onClick={() => setLockBlueprintAspect((value) => !value)}
+                disabled={!canManage || layoutLocked}
+                title={lockBlueprintAspect ? "Width and height are locked together — click to unlock" : "Width and height resize independently — click to lock"}
+              >
+                {lockBlueprintAspect ? <Link2 size={14} /> : <Link2Off size={14} />}
+              </button>
+              <label><span>Height</span><input type="number" min="60" step="10" value={Math.round(blueprint.height || canvasHeight)} disabled={!canManage || layoutLocked} onChange={(event) => setBlueprintHeight(event.target.value)} /></label>
+            </div>
+            <div className="blueprint-size-presets">
+              {BLUEPRINT_SIZE_PRESETS.map(([label, fraction]) => (
+                <button type="button" key={label} onClick={() => applyBlueprintSizePreset(fraction)} disabled={!canManage || layoutLocked}>{label}</button>
+              ))}
+            </div>
             <div className="blueprint-position-row">
               <button type="button" onClick={centerBlueprint} disabled={!canManage || layoutLocked}>Center</button>
-              <button type="button" onClick={fitBlueprintToCanvas} disabled={!canManage || layoutLocked}><Maximize2 size={13} /> Fit to canvas</button>
+              <button type="button" onClick={fitBlueprintToCanvas} disabled={!canManage || layoutLocked}><Maximize2 size={13} /> Fit to canvas (stretch)</button>
             </div>
             <label><span>Rotation</span><input type="number" value={Math.round(blueprint.rotate || 0)} disabled={!canManage || layoutLocked} onChange={(event) => onBlueprintChange?.({ rotate: Number(event.target.value) || 0 })} /></label>
             <div className="blueprint-rotate-row">
