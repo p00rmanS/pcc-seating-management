@@ -2938,77 +2938,6 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
     setSelectedAreaId(null); setSelectedAreaIds([]); setSelectedTableId(null); setSelectedTableIds([]);
   }, [activeRid, isLeadOrAdmin, layoutConfig.name, pushHistory]);
 
-
-  useEffect(() => {
-    const handler = (event) => {
-      const target = event.target;
-      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") { event.preventDefault(); redo(); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") { event.preventDefault(); selectAllTables(); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c" && selectedTableIds.length) { event.preventDefault(); copySelectedTables(); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") { event.preventDefault(); pasteSelectedTables(); }
-      if (event.key === "Escape") { clearTableSelection(); setBulkSelectMode(false); if (blueprintEditMode) setBlueprintEditMode(false); }
-      if ((event.key === "Delete" || event.key === "Backspace") && selectedTableIds.length) { event.preventDefault(); deleteSelectedTables(); }
-      if (permissions.canMoveTables && selectedTableIds.length && ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) {
-        event.preventDefault();
-        const step = event.shiftKey ? 20 : 5;
-        const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
-        const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
-        pushHistory();
-        const selected = new Set(selectedTableIds);
-        setTables((previous) => previous.map((table) => selected.has(table.id)
-          ? { ...table, pos: { x: Math.max(0, table.pos.x + dx), y: Math.max(0, table.pos.y + dy) } }
-          : table));
-      }
-      // Area shortcuts only kick in during Area Edit Mode with no table
-      // selected, so they never fight with the table shortcuts just above —
-      // tables aren't even rendered while areaEditMode is on.
-      if (permissions.canManageZones && areaEditMode && selectedAreaIds.length && !selectedTableIds.length) {
-        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") { event.preventDefault(); copySelectedAreas(); }
-        if ((event.key === "Delete" || event.key === "Backspace")) { event.preventDefault(); deleteSelectedAreas(); }
-        if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) {
-          event.preventDefault();
-          const step = event.shiftKey ? 20 : 5;
-          const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
-          const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
-          pushHistory();
-          const selected = new Set(selectedAreaIds);
-          setAreas((previous) => previous.map((area) => selected.has(area.id)
-            ? { ...area, x: Math.max(0, area.x + dx), y: Math.max(0, area.y + dy) }
-            : area));
-        }
-      }
-      if (permissions.canManageZones && areaEditMode && !selectedTableIds.length && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") {
-        event.preventDefault();
-        pasteSelectedAreas();
-      }
-      // Blueprint shortcuts only kick in while its edit mode is on and no table
-      // is selected, so they never fight with the table shortcuts just above.
-      if (isLeadOrAdmin && blueprintEditMode && !selectedTableIds.length) {
-        const blueprint = blueprintsByR[activeRid];
-        if (blueprint?.dataUrl) {
-          if (event.key.toLowerCase() === "r") {
-            event.preventDefault();
-            const delta = event.shiftKey ? -90 : 90;
-            updateBlueprint({ rotate: Math.round(((blueprint.rotate || 0) + delta + 360) % 360) });
-          } else if (event.key === "Delete" || event.key === "Backspace") {
-            event.preventDefault();
-            updateBlueprint({ dataUrl: null });
-            setBlueprintEditMode(false);
-          } else if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) {
-            event.preventDefault();
-            const step = event.shiftKey ? 20 : 5;
-            const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
-            const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
-            updateBlueprint({ x: Math.max(0, (blueprint.x || 0) + dx), y: Math.max(0, (blueprint.y || 0) + dy) });
-          }
-        }
-      }
-    };
-    window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  }, [undo, redo, selectAllTables, clearTableSelection, deleteSelectedTables, selectedTableIds, pushHistory, setTables, copySelectedTables, pasteSelectedTables, permissions.canMoveTables, permissions.canManageZones, areaEditMode, selectedAreaIds, setAreas, copySelectedAreas, pasteSelectedAreas, deleteSelectedAreas, isLeadOrAdmin, blueprintEditMode, blueprintsByR, activeRid, updateBlueprint]);
-
   useEffect(() => {
     if (!safeSnapshotRef.current) safeSnapshotRef.current = captureVenueSnapshot();
   }, [activeRid, captureVenueSnapshot]);
@@ -3962,6 +3891,83 @@ const toggleAreaEditMode = useCallback(() => {
       tables: structuredClone(newTables.filter((table) => table.areaId === area.id)),
     }));
   }, [permissions.canManageZones, permissions.canManageTables, pushHistory, getNextTableNumber, layoutConfig.canvasWidth, layoutConfig.canvasHeight, setAreas, setTables]);
+
+  // Declared here (after copySelectedAreas/pasteSelectedAreas/deleteSelectedAreas
+  // and setAreas above) rather than nearer the other keyboard-shortcut state —
+  // this effect's dependency array reads all of those, and since they're plain
+  // `const` bindings in this component body, referencing them before their own
+  // declaration line runs is a temporal-dead-zone ReferenceError (throws on
+  // every render, i.e. a permanent blank screen once logged in — not a subtle
+  // bug). Keep this effect below anything new it depends on.
+  useEffect(() => {
+    const handler = (event) => {
+      const target = event.target;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") { event.preventDefault(); redo(); }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") { event.preventDefault(); selectAllTables(); }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c" && selectedTableIds.length) { event.preventDefault(); copySelectedTables(); }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") { event.preventDefault(); pasteSelectedTables(); }
+      if (event.key === "Escape") { clearTableSelection(); setBulkSelectMode(false); if (blueprintEditMode) setBlueprintEditMode(false); }
+      if ((event.key === "Delete" || event.key === "Backspace") && selectedTableIds.length) { event.preventDefault(); deleteSelectedTables(); }
+      if (permissions.canMoveTables && selectedTableIds.length && ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) {
+        event.preventDefault();
+        const step = event.shiftKey ? 20 : 5;
+        const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+        const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+        pushHistory();
+        const selected = new Set(selectedTableIds);
+        setTables((previous) => previous.map((table) => selected.has(table.id)
+          ? { ...table, pos: { x: Math.max(0, table.pos.x + dx), y: Math.max(0, table.pos.y + dy) } }
+          : table));
+      }
+      // Area shortcuts only kick in during Area Edit Mode with no table
+      // selected, so they never fight with the table shortcuts just above —
+      // tables aren't even rendered while areaEditMode is on.
+      if (permissions.canManageZones && areaEditMode && selectedAreaIds.length && !selectedTableIds.length) {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") { event.preventDefault(); copySelectedAreas(); }
+        if ((event.key === "Delete" || event.key === "Backspace")) { event.preventDefault(); deleteSelectedAreas(); }
+        if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) {
+          event.preventDefault();
+          const step = event.shiftKey ? 20 : 5;
+          const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+          const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+          pushHistory();
+          const selected = new Set(selectedAreaIds);
+          setAreas((previous) => previous.map((area) => selected.has(area.id)
+            ? { ...area, x: Math.max(0, area.x + dx), y: Math.max(0, area.y + dy) }
+            : area));
+        }
+      }
+      if (permissions.canManageZones && areaEditMode && !selectedTableIds.length && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") {
+        event.preventDefault();
+        pasteSelectedAreas();
+      }
+      // Blueprint shortcuts only kick in while its edit mode is on and no table
+      // is selected, so they never fight with the table shortcuts just above.
+      if (isLeadOrAdmin && blueprintEditMode && !selectedTableIds.length) {
+        const blueprint = blueprintsByR[activeRid];
+        if (blueprint?.dataUrl) {
+          if (event.key.toLowerCase() === "r") {
+            event.preventDefault();
+            const delta = event.shiftKey ? -90 : 90;
+            updateBlueprint({ rotate: Math.round(((blueprint.rotate || 0) + delta + 360) % 360) });
+          } else if (event.key === "Delete" || event.key === "Backspace") {
+            event.preventDefault();
+            updateBlueprint({ dataUrl: null });
+            setBlueprintEditMode(false);
+          } else if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) {
+            event.preventDefault();
+            const step = event.shiftKey ? 20 : 5;
+            const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+            const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+            updateBlueprint({ x: Math.max(0, (blueprint.x || 0) + dx), y: Math.max(0, (blueprint.y || 0) + dy) });
+          }
+        }
+      }
+    };
+    window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
+  }, [undo, redo, selectAllTables, clearTableSelection, deleteSelectedTables, selectedTableIds, pushHistory, setTables, copySelectedTables, pasteSelectedTables, permissions.canMoveTables, permissions.canManageZones, areaEditMode, selectedAreaIds, setAreas, copySelectedAreas, pasteSelectedAreas, deleteSelectedAreas, isLeadOrAdmin, blueprintEditMode, blueprintsByR, activeRid, updateBlueprint]);
 
   const exportVenueLayout = useCallback(() => {
     if (!permissions.canEditLayout) return;
