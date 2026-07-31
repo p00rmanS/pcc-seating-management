@@ -27,6 +27,7 @@ function normalizeSnapshot(parsed) {
     areasByR: isObject(parsed.areasByR) ? parsed.areasByR : {},
     venueOperationsByR: isObject(parsed.venueOperationsByR) ? parsed.venueOperationsByR : {},
     canvasSettingsByR: isObject(parsed.canvasSettingsByR) ? parsed.canvasSettingsByR : {},
+    blueprintsByR: isObject(parsed.blueprintsByR) ? parsed.blueprintsByR : {},
     viewSettingsByRestaurant: isObject(parsed.viewSettingsByRestaurant)
       ? parsed.viewSettingsByRestaurant
       : {},

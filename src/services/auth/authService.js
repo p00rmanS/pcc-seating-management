@@ -150,9 +150,7 @@ export async function saveOwnAccessProfile({
   }
 
   const safeVenueIds = Object.fromEntries(
-    ["ohana", "aloha", "gateway"]
-      .filter((venueId) => venueIds?.[venueId] === true)
-      .map((venueId) => [venueId, true])
+    Object.entries(venueIds || {}).filter(([, value]) => value === true)
   );
 
   return set(ref(db, `pccSeating/v1/users/${uid}`), {
@@ -164,6 +162,16 @@ export async function saveOwnAccessProfile({
     venueIds: safeVenueIds,
     updatedAt: new Date().toISOString(),
   });
+}
+
+// Grants the signed-in employee access to an additional venue (e.g. right
+// after they create or duplicate a custom venue canvas) without touching the
+// rest of their access profile.
+export async function grantOwnVenueAccess(uid, venueId) {
+  if (!auth.currentUser || auth.currentUser.uid !== uid) {
+    throw new Error("The authenticated account does not match this profile.");
+  }
+  await update(ref(db, `pccSeating/v1/users/${uid}/venueIds`), { [venueId]: true });
 }
 
 function normalizeProfile(profile, user) {

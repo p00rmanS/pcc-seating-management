@@ -140,6 +140,36 @@ export default function VenueDesignerPanel({
     }
   };
 
+  // Blueprint images are stored directly in Realtime Database alongside
+  // tables/areas (there's no Firebase Storage on this project's plan), so
+  // every import is re-encoded down to a size that's safe to sync and keep
+  // in the local backup — regardless of source format (PNG/JPG/WEBP/SVG all
+  // get rasterized the same way) or how large the original file was.
+  const BLUEPRINT_MAX_BASE64_CHARS = 900_000; // ~650KB decoded
+  const BLUEPRINT_COMPRESSION_PASSES = [
+    { maxDimension: 1600, quality: 0.72 },
+    { maxDimension: 1100, quality: 0.5 },
+    { maxDimension: 800, quality: 0.4 },
+  ];
+
+  const compressImage = (image) => {
+    for (const { maxDimension, quality } of BLUEPRINT_COMPRESSION_PASSES) {
+      const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight, 1));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const ctx = canvas.getContext("2d");
+      // JPEG has no transparency — fill white first so transparent PNG/SVG
+      // backgrounds don't turn black.
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const compressed = canvas.toDataURL("image/jpeg", quality);
+      if (compressed.length <= BLUEPRINT_MAX_BASE64_CHARS) return compressed;
+    }
+    return null;
+  };
+
   const handleBlueprint = (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -148,10 +178,32 @@ export default function VenueDesignerPanel({
     if (file.size > 8 * 1024 * 1024) { setMessage("Blueprint must be smaller than 8 MB."); return; }
     const reader = new FileReader();
     reader.onload = () => {
-      // Start fit to the current canvas so huge venues (Gateway/Aloha) don't
-      // load a tiny or absurdly stretched image — drag/resize from there.
-      onBlueprintChange?.({ dataUrl: String(reader.result), visible: true, opacity: 0.28, x: 0, y: 0, width: canvasWidth, height: canvasHeight, rotate: 0 });
-      setMessage("Blueprint loaded for tracing. Use \"Move & resize\" below to position it.");
+      const probe = new Image();
+      probe.onload = () => {
+        const compressedDataUrl = compressImage(probe);
+        if (!compressedDataUrl) {
+          setMessage("That image is too complex to store even after compression. Try a simpler image or a smaller export.");
+          return;
+        }
+        // Size to the image's own proportions at a modest fraction of the
+        // canvas's shorter side (like the "Medium" preset below), instead of
+        // stretching it to the full canvas — on huge venues (Gateway/Aloha,
+        // tens of thousands of px wide) that made every import look
+        // enormous. Drag/resize or use a size preset from there.
+        const naturalWidth = probe.naturalWidth || canvasWidth;
+        const naturalHeight = probe.naturalHeight || canvasHeight;
+        const ratio = naturalHeight > 0 ? naturalWidth / naturalHeight : 1;
+        const targetSide = Math.min(canvasWidth, canvasHeight) * 0.5;
+        const width = Math.max(60, ratio >= 1 ? targetSide : targetSide * ratio);
+        const height = Math.max(60, ratio >= 1 ? targetSide / ratio : targetSide);
+        onBlueprintChange?.({
+          dataUrl: compressedDataUrl, visible: true, opacity: 0.28, rotate: 0, width, height,
+          x: Math.max(0, (canvasWidth - width) / 2), y: Math.max(0, (canvasHeight - height) / 2),
+        });
+        setMessage("Blueprint loaded for tracing. Use \"Move & resize\" below to position or resize it.");
+      };
+      probe.onerror = () => setMessage("Unable to read that image. Try a different file.");
+      probe.src = String(reader.result);
     };
     reader.readAsDataURL(file);
   };

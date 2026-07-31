@@ -54,6 +54,7 @@ export function subscribeToAuthorizedVenues(venueIds, onData, onError) {
           operations: value.operations || null,
           metadata: value.metadata || null,
           canvas: value.canvas || null,
+          blueprint: value.blueprint || null,
         };
         onData({ ...current });
       },
@@ -85,7 +86,7 @@ export function subscribeToConnectionState(onChange) {
 
 export async function saveVenueToCloud(venueId, venueData, metadata = {}, dirtyKeys = null) {
   const venuePath = `${ROOT_PATH}/venues/${venueId}`;
-  const keys = new Set(dirtyKeys || ["tables", "servers", "groups", "areas", "canvas", "operations"]);
+  const keys = new Set(dirtyKeys || ["tables", "servers", "groups", "areas", "canvas", "operations", "blueprint"]);
   const writes = [];
   if (keys.has("tables")) writes.push(set(ref(db, `${venuePath}/tables`), arrayToCollection(venueData.tables)));
   if (keys.has("servers")) writes.push(set(ref(db, `${venuePath}/servers`), arrayToCollection(venueData.servers)));
@@ -94,6 +95,7 @@ export async function saveVenueToCloud(venueId, venueData, metadata = {}, dirtyK
   if (keys.has("canvas")) writes.push(set(ref(db, `${venuePath}/canvas`), {
     width: Number(venueData.canvas?.width) || 0, height: Number(venueData.canvas?.height) || 0,
   }));
+  if (keys.has("blueprint")) writes.push(set(ref(db, `${venuePath}/blueprint`), venueData.blueprint || null));
   if (keys.has("operations")) writes.push(set(ref(db, `${venuePath}/operations`), {
     expectedGuests: Number(venueData.operations?.expectedGuests) || 0,
     scannedGuests: Number(venueData.operations?.scannedGuests) || 0,

@@ -31,7 +31,7 @@ import DailyOperationsHub from "./components/operations/DailyOperationsHub";
 import MyTablesBar from "./components/operations/MyTablesBar";
 import TestingPanel from "./components/testing/TestingPanel";
 import "./styles/workspace.css";
-import { signOutEmployee, subscribeToAuthSession } from "./services/auth/authService";
+import { signOutEmployee, subscribeToAuthSession, grantOwnVenueAccess } from "./services/auth/authService";
 import {
   Scissors,
   Combine,
@@ -74,6 +74,7 @@ import {
   Undo2,
   Redo2,
   PackageOpen,
+  Pencil,
 } from "lucide-react";
 
 /* ============================================================
@@ -1946,7 +1947,7 @@ function GroupPanel({ groups, tables, onAdd, onRemove, canManage, highlightedGro
 // ---------- main app ----------
 
 
-function VenueCanvasManager({ open, restaurants, layoutConfig, onClose, onCreate }) {
+function VenueCanvasManager({ open, restaurants, layoutConfig, onClose, onCreate, initialMode = "blank", initialSourceId = null }) {
   const [name, setName] = useState("");
   const [width, setWidth] = useState(4200);
   const [height, setHeight] = useState(2800);
@@ -1954,8 +1955,14 @@ function VenueCanvasManager({ open, restaurants, layoutConfig, onClose, onCreate
   const [sourceId, setSourceId] = useState(restaurants[0]?.id || "ohana");
   useEffect(() => {
     if (!open) return;
-    setName(""); setWidth(4200); setHeight(2800); setMode("blank"); setSourceId(restaurants[0]?.id || "ohana");
-  }, [open, restaurants]);
+    const startMode = initialMode === "duplicate" ? "duplicate" : "blank";
+    const startSourceId = initialSourceId && restaurants.some((venue) => venue.id === initialSourceId) ? initialSourceId : (restaurants[0]?.id || "ohana");
+    setName("");
+    setMode(startMode);
+    setSourceId(startSourceId);
+    setWidth(startMode === "duplicate" ? (layoutConfig[startSourceId]?.canvasWidth || 4200) : 4200);
+    setHeight(startMode === "duplicate" ? (layoutConfig[startSourceId]?.canvasHeight || 2800) : 2800);
+  }, [open, restaurants, initialMode, initialSourceId, layoutConfig]);
   if (!open) return null;
   const submit = () => {
     const cleanName = name.trim();
@@ -1966,8 +1973,8 @@ function VenueCanvasManager({ open, restaurants, layoutConfig, onClose, onCreate
     <section className="pcc-dialog venue-canvas-dialog" role="dialog" aria-modal="true" aria-labelledby="venue-canvas-title">
       <div className="pcc-dialog-icon primary"><Building2 size={23}/></div>
       <div className="pcc-dialog-copy">
-        <h2 id="venue-canvas-title">Create New Venue</h2>
-        <p>Developer-only canvas creation. Add a blank layout or duplicate an existing venue.</p>
+        <h2 id="venue-canvas-title">{mode === "duplicate" ? "Duplicate Venue" : "Create New Venue"}</h2>
+        <p>Available to leads and admins. Add a blank layout or duplicate an existing venue's tables and areas, then give the copy its own name.</p>
       </div>
       <div className="venue-canvas-form">
         <label><span>Venue name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="New restaurant" autoFocus /></label>
@@ -1978,7 +1985,31 @@ function VenueCanvasManager({ open, restaurants, layoutConfig, onClose, onCreate
         <label><span>Starting layout</span><select value={mode} onChange={(e) => setMode(e.target.value)}><option value="blank">Blank canvas</option><option value="duplicate">Duplicate existing venue</option></select></label>
         {mode === "duplicate" && <label><span>Copy from</span><select value={sourceId} onChange={(e) => { const id=e.target.value; setSourceId(id); setWidth(layoutConfig[id]?.canvasWidth || 4200); setHeight(layoutConfig[id]?.canvasHeight || 2800); }}>{restaurants.map((venue) => <option key={venue.id} value={venue.id}>{venue.name}</option>)}</select></label>}
       </div>
-      <div className="pcc-dialog-actions"><button type="button" className="dialog-cancel" onClick={onClose}>Cancel</button><button type="button" className="dialog-confirm" disabled={!name.trim()} onClick={submit}><Plus size={16}/> Create Venue</button></div>
+      <div className="pcc-dialog-actions"><button type="button" className="dialog-cancel" onClick={onClose}>Cancel</button><button type="button" className="dialog-confirm" disabled={!name.trim()} onClick={submit}>{mode === "duplicate" ? <Copy size={16}/> : <Plus size={16}/>} {mode === "duplicate" ? "Duplicate Venue" : "Create Venue"}</button></div>
+    </section>
+  </div>;
+}
+
+function RenameVenueDialog({ open, currentName, onClose, onRename }) {
+  const [name, setName] = useState(currentName || "");
+  useEffect(() => { if (open) setName(currentName || ""); }, [open, currentName]);
+  if (!open) return null;
+  const submit = () => {
+    const cleanName = name.trim();
+    if (!cleanName) return;
+    onRename(cleanName);
+  };
+  return <div className="pcc-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="pcc-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-venue-title">
+      <div className="pcc-dialog-icon primary"><Pencil size={23}/></div>
+      <div className="pcc-dialog-copy">
+        <h2 id="rename-venue-title">Rename Venue</h2>
+        <p>This only renames the venue tab — its tables, areas, and blueprint are untouched.</p>
+      </div>
+      <div className="venue-canvas-form">
+        <label><span>Venue name</span><input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submit(); }} autoFocus /></label>
+      </div>
+      <div className="pcc-dialog-actions"><button type="button" className="dialog-cancel" onClick={onClose}>Cancel</button><button type="button" className="dialog-confirm" disabled={!name.trim()} onClick={submit}><Check size={16}/> Save Name</button></div>
     </section>
   </div>;
 }
@@ -2039,6 +2070,8 @@ function SeatingWorkspace({ authSession }) {
     return result;
   });
   const [venueManagerOpen, setVenueManagerOpen] = useState(false);
+  const [venueManagerPreset, setVenueManagerPreset] = useState(null);
+  const [renameVenueTarget, setRenameVenueTarget] = useState(null);
   const [activeRid, setActiveRid] = useState(() =>
     initialRestaurants.some((restaurant) => restaurant.id === localSnapshot?.activeRid)
       ? localSnapshot.activeRid
@@ -2110,7 +2143,13 @@ const [employees, setEmployees] = useState({});
 const [staffingDate, setStaffingDate] = useState(getHawaiiDateString);
 const [staffingAssignments, setStaffingAssignments] = useState({});
 const [staffingSaveState, setStaffingSaveState] = useState("idle");
-const [blueprintsByR, setBlueprintsByR] = useState(() => Object.fromEntries(initialRestaurants.map((restaurant) => [restaurant.id, { dataUrl: null, opacity: 0.35, visible: true }])));
+const [blueprintsByR, setBlueprintsByR] = useState(() => {
+  const saved = localSnapshot?.blueprintsByR || {};
+  return Object.fromEntries(initialRestaurants.map((restaurant) => [
+    restaurant.id,
+    { dataUrl: null, opacity: 0.35, visible: true, ...(saved[restaurant.id] || {}) },
+  ]));
+});
 const [tableHighlightMode, setTableHighlightMode] = useState("mine");
 const [highlightEmployeeUid, setHighlightEmployeeUid] = useState(null);
 const [highlightedGroupId, setHighlightedGroupId] = useState(null);
@@ -2125,6 +2164,10 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
   useEffect(() => { if (layoutLocked) setAreaEditMode(false); }, [layoutLocked]);
   useEffect(() => { setBlueprintEditMode(false); }, [activeRid]);
 
+  // The blueprint dataUrl is a compressed, size-capped image (see
+  // VenueDesignerPanel's handleBlueprint) small enough to sync straight
+  // through Realtime Database and the local backup like tables/areas/canvas —
+  // no separate upload step needed.
   const updateBlueprint = useCallback((patch) => {
     setBlueprintsByR((previous) => ({ ...previous, [activeRid]: { ...(previous[activeRid] || {}), ...patch } }));
   }, [activeRid]);
@@ -2322,6 +2365,10 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
       venueOperationsByR,
       canvasSettingsByR,
       viewSettingsByRestaurant,
+      // Blueprint images are compressed and size-capped client-side (see
+      // VenueDesignerPanel's handleBlueprint) before ever reaching this
+      // state, so they're safe to keep in the local backup as-is.
+      blueprintsByR,
     };
     const signature = JSON.stringify(localPayload);
     if (signature === lastLocalSignatureRef.current) return undefined;
@@ -2352,6 +2399,7 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
     venueOperationsByR,
     canvasSettingsByR,
     viewSettingsByRestaurant,
+    blueprintsByR,
     authSession.user.uid,
   ]);
 
@@ -2384,6 +2432,7 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
                 scannedGuests: Number(remote.operations.scannedGuests) || 0,
                 venueCapacity: Number(remote.operations.venueCapacity) || 0,
               } : null,
+              blueprint: remote?.blueprint || null,
             };
           });
 
@@ -2396,6 +2445,7 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
               tables: JSON.stringify(data.tables ?? []), servers: JSON.stringify(data.servers ?? []),
               groups: JSON.stringify(data.groups ?? []), areas: JSON.stringify(data.areas ?? []),
               canvas: JSON.stringify(data.canvas ?? {}), operations: JSON.stringify(data.operations ?? {}),
+              blueprint: JSON.stringify(data.blueprint ?? null),
             };
           });
 
@@ -2439,6 +2489,12 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
               operational[restaurant.id].operations ?? previous[restaurant.id] ?? { expectedGuests: 0, scannedGuests: 0, venueCapacity: 0 },
             ]))
           );
+          setBlueprintsByR((previous) =>
+            Object.fromEntries(restaurants.map((restaurant) => [
+              restaurant.id,
+              operational[restaurant.id].blueprint || previous[restaurant.id] || { dataUrl: null, opacity: 0.35, visible: true },
+            ]))
+          );
         }
 
         cloudReadyRef.current = true;
@@ -2477,6 +2533,9 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
         areas: areasByR[restaurant.id] || [],
         operations: venueOperationsByR[restaurant.id] || { expectedGuests: 0, scannedGuests: 0, venueCapacity: 0 },
         canvas: canvasSettingsByR[restaurant.id] || { width: layoutConfigByR[restaurant.id].canvasWidth, height: layoutConfigByR[restaurant.id].canvasHeight },
+        // Compressed + size-capped client-side (see VenueDesignerPanel's
+        // handleBlueprint), so it's safe to sync like any other field.
+        blueprint: blueprintsByR[restaurant.id] || null,
       }])
     );
     const signature = JSON.stringify(operational);
@@ -2493,6 +2552,7 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
               tables: JSON.stringify(venueData.tables || []), servers: JSON.stringify(venueData.servers || []),
               groups: JSON.stringify(venueData.groups || []), areas: JSON.stringify(venueData.areas || []),
               canvas: JSON.stringify(venueData.canvas || {}), operations: JSON.stringify(venueData.operations || {}),
+              blueprint: JSON.stringify(venueData.blueprint),
             };
             const dirtyKeys = Object.keys(current).filter((key) => current[key] !== previous[key]);
             if (!dirtyKeys.length) return Promise.resolve();
@@ -2517,6 +2577,7 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
     areasByR,
     venueOperationsByR,
     canvasSettingsByR,
+    blueprintsByR,
     clientId,
     currentRole,
     permissions.canEditLayout,
@@ -3412,6 +3473,19 @@ const toggleAreaEditMode = useCallback(() => {
     setZoom(clampWorkspaceZoom(fitRatio > 0 ? fitRatio : layoutConfig.defaultZoom));
   };
 
+  // Used by the header's quick table search to jump the canvas to a table
+  // found by number or guest name, mirroring the greeter dashboard's
+  // "View area" focus behavior.
+  const locateTable = (table) => {
+    if (!table?.pos) return;
+    setAppModule("seating");
+    setGreeterView(false);
+    setSelectedAreaId(null);
+    setSelectedTableId(table.id);
+    setZoom(clampWorkspaceZoom(Math.max(layoutConfig.minZoom, 0.75)));
+    updateViewSettings({ pan: { x: Math.max(0, table.pos.x * 0.75 - 300), y: Math.max(0, table.pos.y * 0.75 - 250) } });
+  };
+
   const seatingMetrics = useMemo(() => {
     const visibleTables = tables.filter((table) => !(table.childIds && table.childIds.length));
     const occupied = visibleTables.filter((table) => table.status === "occupied");
@@ -3832,7 +3906,7 @@ const toggleAreaEditMode = useCallback(() => {
   };
 
   const createVenueCanvas = useCallback(({ name, width, height, mode, sourceId }) => {
-    if (currentRole !== "developer") return;
+    if (!isLeadOrAdmin) return;
     const baseId = name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "venue";
     let id = baseId; let suffix = 2;
     while (restaurants.some((venue) => venue.id === id)) id = `${baseId}-${suffix++}`;
@@ -3851,8 +3925,32 @@ const toggleAreaEditMode = useCallback(() => {
     setViewSettingsByRestaurant((previous) => ({ ...previous, [id]: { zoom: Math.min(1, Math.max(0.25, 1200 / width)), showGrid: true, tableNumberSize: "medium", capacitySize: "large", tableTextColor: "white", accessibilityMode: false, showTableNumbers: true, showPax: true, showAreaLabels: true, showServerNames: true, showCelebrations: true, highlightEmptyTables: false, highlightTableNumbers: false, sidebarCollapsed: false, inspectorCollapsed: false, operationsView: false, headerCollapsed: false, showOccupancyWidget: true, pan: { x: 0, y: 0 } } }));
     setHistoryByR((previous) => ({ ...previous, [id]: [] })); setFutureByR((previous) => ({ ...previous, [id]: [] }));
     setBlueprintsByR((previous) => ({ ...previous, [id]: { dataUrl: null, opacity: 0.35, visible: true } }));
-    setActiveRid(id); setSelectedTableId(null); setSelectedAreaId(null); setVenueManagerOpen(false);
-  }, [currentRole, restaurants, tablesByR, areasByR, serversByR]);
+    setActiveRid(id); setSelectedTableId(null); setSelectedAreaId(null); setVenueManagerOpen(false); setVenueManagerPreset(null);
+
+    // Roles below admin/developer/director only see venues explicitly listed
+    // in their own profile.venueIds — grant the creator access to their new
+    // venue immediately so it doesn't vanish the moment they make it.
+    if (!["admin", "developer", "director"].includes(currentRole)) {
+      grantOwnVenueAccess(authSession.user.uid, id).catch((error) => {
+        console.error("Unable to grant access to the new venue:", error);
+      });
+    }
+  }, [currentRole, isLeadOrAdmin, restaurants, tablesByR, areasByR, serversByR, authSession.user.uid]);
+
+  const duplicateVenue = useCallback((sourceId) => {
+    setVenueManagerPreset({ mode: "duplicate", sourceId });
+    setVenueManagerOpen(true);
+  }, []);
+
+  const renameVenue = useCallback((newName) => {
+    const target = renameVenueTarget;
+    if (!target) return;
+    const cleanName = newName.trim();
+    if (!cleanName) return;
+    setRestaurants((previous) => previous.map((venue) => (venue.id === target.id ? { ...venue, name: cleanName } : venue)));
+    setLayoutConfigByR((previous) => ({ ...previous, [target.id]: { ...previous[target.id], name: cleanName } }));
+    setRenameVenueTarget(null);
+  }, [renameVenueTarget]);
 
   useEffect(() => {
     const closeMenus = (event) => {
@@ -3915,12 +4013,15 @@ const toggleAreaEditMode = useCallback(() => {
         }}
         onSignOut={signOutEmployee}
         onOpenAccount={() => setAccountModalOpen(true)}
-        testingMode
         onRetryCloud={() => retryCloudRef.current?.()}
         collapsed={headerCollapsed}
         onToggleCollapsed={() => setHeaderCollapsed((value) => !value)}
-        canCreateVenue={currentRole === "developer"}
-        onCreateVenue={() => setVenueManagerOpen(true)}
+        canCreateVenue={isLeadOrAdmin}
+        onCreateVenue={() => { setVenueManagerPreset(null); setVenueManagerOpen(true); }}
+        onDuplicateVenue={duplicateVenue}
+        onRenameVenue={(id, name) => setRenameVenueTarget({ id, name })}
+        venueTables={tables}
+        onLocateTable={locateTable}
       />}
 
       {!mobileFocusMode && !operationsView && !greeterView && (
@@ -4487,7 +4588,21 @@ const toggleAreaEditMode = useCallback(() => {
         />
       )}
 
-      <VenueCanvasManager open={venueManagerOpen} restaurants={restaurants} layoutConfig={layoutConfigByR} onClose={() => setVenueManagerOpen(false)} onCreate={createVenueCanvas} />
+      <VenueCanvasManager
+        open={venueManagerOpen}
+        restaurants={restaurants}
+        layoutConfig={layoutConfigByR}
+        onClose={() => { setVenueManagerOpen(false); setVenueManagerPreset(null); }}
+        onCreate={createVenueCanvas}
+        initialMode={venueManagerPreset?.mode}
+        initialSourceId={venueManagerPreset?.sourceId}
+      />
+      <RenameVenueDialog
+        open={Boolean(renameVenueTarget)}
+        currentName={renameVenueTarget?.name}
+        onClose={() => setRenameVenueTarget(null)}
+        onRename={renameVenue}
+      />
       <ActionDialog dialog={actionDialog} onResolve={resolveDialog} />
 
       {appModule === "seating" && !mobileFocusMode && !greeterView && <WorkspaceFooter
