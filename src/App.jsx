@@ -75,6 +75,8 @@ import {
   Redo2,
   PackageOpen,
   Pencil,
+  ClipboardPaste,
+  Layers3,
 } from "lucide-react";
 
 /* ============================================================
@@ -421,6 +423,7 @@ function EditableArea({
   canvasHeight,
   onSelect,
   onChange,
+  onMove,
   onRequestCanvasExpand,
   onBeginInteraction,
   displaySettings,
@@ -430,36 +433,44 @@ function EditableArea({
 
   if (area.hidden && !editMode) return null;
 
+  // Selection is decided on pointer-up (see endInteraction) rather than here
+  // on pointer-down — mirroring TableChip's onPointerDown/onPointerUp split —
+  // so that starting a drag on an already-selected area (part of a
+  // multi-select group) doesn't collapse the selection down to one area
+  // before the group-move logic in moveArea gets a chance to see it.
   const beginInteraction = (event, mode) => {
     event.stopPropagation();
     if (!editMode) return;
-    onSelect(area.id);
-    if (area.locked) return;
-    onBeginInteraction?.();
-
-    event.preventDefault();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
     interactionRef.current = {
       mode,
       startX: event.clientX,
       startY: event.clientY,
       area: { ...area },
+      moved: false,
     };
+    if (mode === "move" && area.locked) return; // still selectable on click, just not draggable
+    onBeginInteraction?.();
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
   };
 
   const handlePointerMove = (event) => {
     const interaction = interactionRef.current;
-    if (!interaction || area.locked) return;
+    if (!interaction) return;
 
     const dx = (event.clientX - interaction.startX) / zoom;
     const dy = (event.clientY - interaction.startY) / zoom;
+    if (Math.abs(event.clientX - interaction.startX) > 3 || Math.abs(event.clientY - interaction.startY) > 3) {
+      interaction.moved = true;
+    }
+    if (area.locked) return;
     const original = interaction.area;
 
     if (interaction.mode === "move") {
       const x = Math.max(0, original.x + dx);
       const y = Math.max(0, original.y + dy);
       onRequestCanvasExpand?.(x + original.w + 600, y + original.h + 600);
-      onChange(area.id, { x, y });
+      onMove(area.id, x, y);
     }
 
     if (interaction.mode === "resize") {
@@ -482,9 +493,12 @@ function EditableArea({
   };
 
   const endInteraction = (event) => {
-    if (interactionRef.current) {
-      event.currentTarget.releasePointerCapture?.(event.pointerId);
-    }
+    const interaction = interactionRef.current;
+    if (interaction) event.currentTarget.releasePointerCapture?.(event.pointerId);
+    // A plain click (no drag) on the move handle selects the area — additive
+    // with shift/ctrl/cmd via onSelect's own event-based logic. Resize/rotate
+    // handles never change selection.
+    if (interaction?.mode === "move" && !interaction.moved) onSelect(area.id, event);
     interactionRef.current = null;
   };
 
@@ -508,11 +522,6 @@ function EditableArea({
       onPointerMove={handlePointerMove}
       onPointerUp={endInteraction}
       onPointerCancel={endInteraction}
-      onClick={(event) => {
-        if (!editMode) return;
-        event.stopPropagation();
-        onSelect(area.id);
-      }}
       title={editMode ? `${area.label}${area.locked ? " · locked" : " · drag to move"}` : area.label}
     >
       {displaySettings.showAreaLabels !== false && (
@@ -672,6 +681,7 @@ function BlueprintOverlay({ blueprint, canvasWidth, canvasHeight, editMode, zoom
 function AreaEditor({
   areas,
   selectedArea,
+  selectedAreaIds = [],
   editMode,
   canManage,
   onToggleEditMode,
@@ -679,10 +689,15 @@ function AreaEditor({
   onUpdate,
   onAdd,
   onDuplicate,
+  onDuplicateWithTables,
   onDelete,
   onReset,
+  onCopy,
+  onPaste,
+  onDeleteSelected,
 }) {
   const [customLandmarkName, setCustomLandmarkName] = useState("");
+  const multiSelected = selectedAreaIds.length > 1;
 
   const addCustomLandmark = () => {
     const label = customLandmarkName.trim();
@@ -699,7 +714,7 @@ function AreaEditor({
             <MousePointer2 size={15} /> Venue Areas
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            {editMode ? "Select an area, then drag, resize, rotate, rename, lock, or duplicate it." : "Area editing is off during normal seating operations."}
+            {editMode ? "Select an area, then drag, resize, rotate, rename, lock, or duplicate it. Shift/Ctrl-click to select several at once." : "Area editing is off during normal seating operations."}
           </p>
         </div>
         <LockedButton
@@ -718,8 +733,8 @@ function AreaEditor({
               <button
                 type="button"
                 key={area.id}
-                onClick={() => onSelect(area.id)}
-                className={`area-chip ${selectedArea?.id === area.id ? "area-chip-active" : ""}`}
+                onClick={(event) => onSelect(area.id, event)}
+                className={`area-chip ${selectedAreaIds.includes(area.id) ? "area-chip-active" : ""}`}
               >
                 {area.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
                 {area.label}
@@ -733,6 +748,7 @@ function AreaEditor({
             <button type="button" onClick={() => onAdd("rounded", "seating")}><Plus size={13} /> Rounded</button>
             <button type="button" onClick={() => onAdd("pill", "seating")}><Plus size={13} /> Pill</button>
             <button type="button" onClick={() => onAdd("diamond", "seating")}><Plus size={13} /> Diamond</button>
+            <button type="button" onClick={onPaste} title="Paste the last copied area(s) (Ctrl+V)"><ClipboardPaste size={13} /> Paste</button>
             <div className="area-manager-divider">Map landmarks</div>
             {["Stage", "Restroom", "Drinks", "Buffet", "Entrance", "Exit", "Station"].map((label) => (
               <button type="button" key={label} onClick={() => onAdd("rounded", "landmark", label)}><Plus size={13} /> {label}</button>
@@ -754,7 +770,17 @@ function AreaEditor({
             <button type="button" onClick={onReset} className="area-reset-button">Reset Venue Areas</button>
           </div>
 
-          {selectedArea ? (
+          {multiSelected ? (
+            <div className="area-multiselect-card">
+              <strong>{selectedAreaIds.length} areas selected</strong>
+              <p>Drag any one of them to move the whole group together, or use the arrow keys to nudge them all at once.</p>
+              <div className="area-editor-buttons">
+                <button type="button" onClick={onCopy} title="Copy (Ctrl+C)"><Copy size={13} /> Copy</button>
+                <button type="button" onClick={() => selectedAreaIds.forEach((id) => onDuplicateWithTables(id))} title="Duplicate each selected area along with its tables"><Layers3 size={13} /> Duplicate with tables</button>
+                <button type="button" className="area-delete-button" onClick={onDeleteSelected}><Trash2 size={13} /> Delete selected</button>
+              </div>
+            </div>
+          ) : selectedArea ? (
             <div className="area-editor-grid">
               <label>
                 Area name
@@ -831,6 +857,7 @@ function AreaEditor({
                 {selectedArea.hidden ? <EyeOff size={13} /> : <Eye size={13} />} Hidden
               </label>
               <div className="area-editor-buttons">
+                <button type="button" onClick={onCopy} title="Copy (Ctrl+C), then Paste to place a duplicate elsewhere"><Copy size={13} /> Copy</button>
                 <button type="button" onClick={() => onDuplicate(selectedArea.id)}><Copy size={13} /> Duplicate</button>
                 <button
                   type="button"
@@ -1576,9 +1603,11 @@ function FloorPlanCanvas({
   layoutConfig,
   areas,
   selectedAreaId,
+  selectedAreaIds = [],
   areaEditMode,
   onSelectArea,
   onUpdateArea,
+  onMoveArea,
   tables,
   servers,
   groups,
@@ -1777,12 +1806,13 @@ function FloorPlanCanvas({
                 key={area.id}
                 area={area}
                 editMode={areaEditMode}
-                selected={selectedAreaId === area.id}
+                selected={selectedAreaId === area.id || selectedAreaIds.includes(area.id)}
                 zoom={zoom}
                 canvasWidth={canvasWidth}
                 canvasHeight={canvasHeight}
                 onSelect={onSelectArea}
                 onChange={onUpdateArea}
+                onMove={onMoveArea}
                 onRequestCanvasExpand={onRequestCanvasExpand}
                 onBeginInteraction={onBeginAreaInteraction}
                 displaySettings={displaySettings}
@@ -2130,6 +2160,8 @@ const [areasByR, setAreasByR] = useState(() =>
 const [areaEditMode, setAreaEditMode] = useState(false);
 const [blueprintEditMode, setBlueprintEditMode] = useState(false);
 const [selectedAreaId, setSelectedAreaId] = useState(null);
+const [selectedAreaIds, setSelectedAreaIds] = useState([]);
+const areaClipboardRef = useRef([]);
 const [venueOperationsByR, setVenueOperationsByR] = useState(() =>
   Object.fromEntries(
     initialRestaurants.map((restaurant) => [
@@ -2201,6 +2233,7 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
       setSelectedTableId(null);
       setSelectedTableIds([]);
       setSelectedAreaId(null);
+      setSelectedAreaIds([]);
       setAreaEditMode(false);
     }
   }, [activeRid, authorizedVenueIds]);
@@ -2689,7 +2722,7 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
     setGroupsByR((prev) => ({ ...prev, [activeRid]: structuredClone(snapshot.groups || []) }));
     setCanvasSettingsByR((prev) => ({ ...prev, [activeRid]: structuredClone(snapshot.canvas || prev[activeRid]) }));
     setVenueOperationsByR((prev) => ({ ...prev, [activeRid]: structuredClone(snapshot.operations || prev[activeRid]) }));
-    setSelectedTableId(null); setSelectedAreaId(null);
+    setSelectedTableId(null); setSelectedAreaId(null); setSelectedAreaIds([]);
   }, [activeRid]);
 
   const undo = useCallback(() => {
@@ -2760,6 +2793,29 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
   const clearTableSelection = useCallback(() => {
     setSelectedTableId(null);
     setSelectedTableIds([]);
+  }, []);
+
+  // Mirrors selectTable above: a plain click replaces the area selection,
+  // shift/ctrl/cmd-click toggles membership so multiple areas can be
+  // copied/moved/deleted together.
+  const selectArea = useCallback((id, event) => {
+    const additive = event?.ctrlKey || event?.metaKey || event?.shiftKey;
+    if (!id) {
+      setSelectedAreaId(null);
+      setSelectedAreaIds([]);
+      return;
+    }
+    if (additive) {
+      setSelectedAreaIds((previous) => {
+        const exists = previous.includes(id);
+        const next = exists ? previous.filter((areaId) => areaId !== id) : [...previous, id];
+        setSelectedAreaId(next.includes(id) ? id : next.at(-1) || null);
+        return next;
+      });
+      return;
+    }
+    setSelectedAreaId(id);
+    setSelectedAreaIds([id]);
   }, []);
 
   const selectAllTables = useCallback(() => {
@@ -2856,6 +2912,7 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
     if (!isLeadOrAdmin) return;
     setLayoutLocksByR((previous) => ({ ...previous, [activeRid]: !previous[activeRid] }));
     setSelectedAreaId(null);
+    setSelectedAreaIds([]);
     setSelectedTableId(null);
     setSelectedTableIds([]);
   }, [activeRid, isLeadOrAdmin]);
@@ -2878,7 +2935,7 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
     setTablesByR((previous) => ({ ...previous, [activeRid]: cleanTables }));
     setAreasByR((previous) => ({ ...previous, [activeRid]: structuredClone(baseline.areas || previous[activeRid] || []) }));
     setCanvasSettingsByR((previous) => ({ ...previous, [activeRid]: structuredClone(baseline.canvas || previous[activeRid]) }));
-    setSelectedAreaId(null); setSelectedTableId(null); setSelectedTableIds([]);
+    setSelectedAreaId(null); setSelectedAreaIds([]); setSelectedTableId(null); setSelectedTableIds([]);
   }, [activeRid, isLeadOrAdmin, layoutConfig.name, pushHistory]);
 
 
@@ -2904,6 +2961,28 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
           ? { ...table, pos: { x: Math.max(0, table.pos.x + dx), y: Math.max(0, table.pos.y + dy) } }
           : table));
       }
+      // Area shortcuts only kick in during Area Edit Mode with no table
+      // selected, so they never fight with the table shortcuts just above —
+      // tables aren't even rendered while areaEditMode is on.
+      if (permissions.canManageZones && areaEditMode && selectedAreaIds.length && !selectedTableIds.length) {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") { event.preventDefault(); copySelectedAreas(); }
+        if ((event.key === "Delete" || event.key === "Backspace")) { event.preventDefault(); deleteSelectedAreas(); }
+        if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) {
+          event.preventDefault();
+          const step = event.shiftKey ? 20 : 5;
+          const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+          const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+          pushHistory();
+          const selected = new Set(selectedAreaIds);
+          setAreas((previous) => previous.map((area) => selected.has(area.id)
+            ? { ...area, x: Math.max(0, area.x + dx), y: Math.max(0, area.y + dy) }
+            : area));
+        }
+      }
+      if (permissions.canManageZones && areaEditMode && !selectedTableIds.length && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") {
+        event.preventDefault();
+        pasteSelectedAreas();
+      }
       // Blueprint shortcuts only kick in while its edit mode is on and no table
       // is selected, so they never fight with the table shortcuts just above.
       if (isLeadOrAdmin && blueprintEditMode && !selectedTableIds.length) {
@@ -2928,7 +3007,7 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
       }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  }, [undo, redo, selectAllTables, clearTableSelection, deleteSelectedTables, selectedTableIds, pushHistory, setTables, copySelectedTables, pasteSelectedTables, permissions.canMoveTables, isLeadOrAdmin, blueprintEditMode, blueprintsByR, activeRid, updateBlueprint]);
+  }, [undo, redo, selectAllTables, clearTableSelection, deleteSelectedTables, selectedTableIds, pushHistory, setTables, copySelectedTables, pasteSelectedTables, permissions.canMoveTables, permissions.canManageZones, areaEditMode, selectedAreaIds, setAreas, copySelectedAreas, pasteSelectedAreas, deleteSelectedAreas, isLeadOrAdmin, blueprintEditMode, blueprintsByR, activeRid, updateBlueprint]);
 
   useEffect(() => {
     if (!safeSnapshotRef.current) safeSnapshotRef.current = captureVenueSnapshot();
@@ -3353,6 +3432,26 @@ const updateArea = useCallback(
   [activeRid, authSession.profile.displayName, authSession.user.uid, clientId, currentRole, permissions.canManageZones, setAreas]
 );
 
+// Mirrors moveTable above: dragging one area of a multi-selected group
+// applies that same delta to every other selected area, so the whole group
+// moves together. Resize/rotate stay single-area and keep going through
+// updateArea unchanged.
+const moveArea = useCallback((id, x, y) => {
+  if (!permissions.canManageZones) return;
+  const source = areas.find((area) => area.id === id);
+  if (!source) return;
+  const isGroupMove = selectedAreaIds.length > 1 && selectedAreaIds.includes(id);
+  const dx = x - source.x;
+  const dy = y - source.y;
+  const selected = new Set(selectedAreaIds);
+  setAreas((previous) => previous.map((area) => {
+    if (isGroupMove && selected.has(area.id)) {
+      return { ...area, x: Math.max(0, area.x + dx), y: Math.max(0, area.y + dy) };
+    }
+    return area.id === id ? { ...area, x, y } : area;
+  }));
+}, [areas, permissions.canManageZones, selectedAreaIds, setAreas]);
+
 const addArea = useCallback(
   (shape = "rectangle", areaKind = "seating", suggestedLabel = "New Area") => {
     if (!permissions.canManageZones) return;
@@ -3378,6 +3477,7 @@ const addArea = useCallback(
     };
     setAreas((previous) => [...previous, nextArea]);
     setSelectedAreaId(id);
+    setSelectedAreaIds([id]);
   },
   [areas.length, permissions.canManageZones, setAreas]
 );
@@ -3390,6 +3490,7 @@ const duplicateArea = useCallback(
       if (!source) return previous;
       const copy = { ...source, id: uid("area"), label: `${source.label} Copy`, x: source.x + 28, y: source.y + 28, protected: false, locked: false };
       setSelectedAreaId(copy.id);
+      setSelectedAreaIds([copy.id]);
       return [...previous, copy];
     });
   },
@@ -3404,21 +3505,36 @@ const deleteArea = useCallback(
     if (!await showConfirm("Delete area?", `${target.label} will be removed, but its tables will remain on the floor.`, { confirmLabel: "Delete area", tone: "danger" })) return;
     setAreas((previous) => previous.filter((area) => area.id !== id));
     setSelectedAreaId(null);
+    setSelectedAreaIds((previous) => previous.filter((areaId) => areaId !== id));
   },
   [areas, permissions.canManageZones, setAreas]
 );
+
+const deleteSelectedAreas = useCallback(async () => {
+  if (!permissions.canManageZones) return;
+  const targets = areas.filter((area) => selectedAreaIds.includes(area.id) && !area.protected);
+  if (!targets.length) return;
+  const label = targets.length === 1 ? targets[0].label : `${targets.length} areas`;
+  if (!await showConfirm("Delete area?", `${label} will be removed, but their tables will remain on the floor.`, { confirmLabel: "Delete", tone: "danger" })) return;
+  const targetIds = new Set(targets.map((area) => area.id));
+  setAreas((previous) => previous.filter((area) => !targetIds.has(area.id)));
+  setSelectedAreaId(null);
+  setSelectedAreaIds([]);
+}, [areas, permissions.canManageZones, selectedAreaIds]);
 
 const resetAreas = useCallback(async () => {
   if (!permissions.canManageZones) return;
   if (!await showConfirm("Reset all areas?", `${layoutConfigByR[activeRid].name} areas will return to their defaults.`, { confirmLabel: "Reset areas", tone: "warning" })) return;
   setAreas(cloneDefaultAreas(activeRid));
   setSelectedAreaId(null);
+  setSelectedAreaIds([]);
 }, [activeRid, permissions.canManageZones, setAreas]);
 
 const toggleAreaEditMode = useCallback(() => {
   if (!permissions.canManageZones) return;
   setAreaEditMode((current) => !current);
   setSelectedAreaId(null);
+  setSelectedAreaIds([]);
   setSelectedTableId(null);
 }, [permissions.canManageZones]);
 
@@ -3481,6 +3597,7 @@ const toggleAreaEditMode = useCallback(() => {
     setAppModule("seating");
     setGreeterView(false);
     setSelectedAreaId(null);
+    setSelectedAreaIds([]);
     setSelectedTableId(table.id);
     setZoom(clampWorkspaceZoom(Math.max(layoutConfig.minZoom, 0.75)));
     updateViewSettings({ pan: { x: Math.max(0, table.pos.x * 0.75 - 300), y: Math.max(0, table.pos.y * 0.75 - 250) } });
@@ -3762,12 +3879,89 @@ const toggleAreaEditMode = useCallback(() => {
     setAreas((previous) => [...previous, copiedArea]);
     if (copiedTables.length) setTables((previous) => [...previous, ...copiedTables]);
     setSelectedAreaId(newAreaId);
+    setSelectedAreaIds([newAreaId]);
     return {
       ok: true,
       areaId: newAreaId,
       message: `${copiedArea.label} created with ${copiedTables.length} copied tables.`,
     };
   }, [areas, getNextTableNumber, layoutConfig.canvasHeight, layoutConfig.canvasWidth, permissions.canManageTables, permissions.canManageZones, setAreas, setTables, tables]);
+
+  // Copy/paste for one or more selected areas, mirroring copySelectedTables/
+  // pasteSelectedTables above — each clipboard entry pairs an area with its
+  // own child tables (same match rule duplicateAreaWithTables uses) so a
+  // paste recreates both together.
+  const copySelectedAreas = useCallback(() => {
+    if (!selectedAreaIds.length) return;
+    const selected = new Set(selectedAreaIds);
+    areaClipboardRef.current = areas
+      .filter((area) => selected.has(area.id))
+      .map((area) => ({
+        area: structuredClone(area),
+        tables: structuredClone(tables.filter((table) =>
+          !(table.childIds && table.childIds.length) &&
+          (table.areaId === area.id || table.zone === area.label)
+        )),
+      }));
+  }, [selectedAreaIds, areas, tables]);
+
+  const pasteSelectedAreas = useCallback(() => {
+    const copied = areaClipboardRef.current || [];
+    if (!permissions.canManageZones || !permissions.canManageTables || !copied.length) return;
+    pushHistory();
+    const offset = 36;
+    let nextNumber = getNextTableNumber();
+    const newAreas = [];
+    const newTables = [];
+    copied.forEach(({ area: source, tables: sourceTables }) => {
+      const newAreaId = uid("area");
+      const copiedArea = {
+        ...source,
+        id: newAreaId,
+        label: `${source.label} Copy`,
+        x: Math.min(layoutConfig.canvasWidth - source.w, source.x + offset),
+        y: Math.min(layoutConfig.canvasHeight - source.h, source.y + offset),
+        protected: false,
+        locked: false,
+        status: "available",
+        statusUpdatedAt: null,
+      };
+      newAreas.push(copiedArea);
+      sourceTables.forEach((table) => {
+        newTables.push({
+          ...structuredClone(table),
+          id: uid("t"),
+          number: String(nextNumber++),
+          zone: copiedArea.label,
+          areaId: copiedArea.id,
+          status: "available",
+          statusUpdatedAt: null,
+          guestName: "",
+          partySize: null,
+          groupId: null,
+          parentId: null,
+          childIds: null,
+          pos: {
+            x: Math.max(0, Math.min(layoutConfig.canvasWidth - 64, table.pos.x + (copiedArea.x - source.x))),
+            y: Math.max(0, Math.min(layoutConfig.canvasHeight - 64, table.pos.y + (copiedArea.y - source.y))),
+          },
+        });
+      });
+    });
+
+    setAreas((previous) => [...previous, ...newAreas]);
+    if (newTables.length) setTables((previous) => [...previous, ...newTables]);
+    const newAreaIds = newAreas.map((area) => area.id);
+    setSelectedAreaIds(newAreaIds);
+    setSelectedAreaId(newAreaIds.at(-1) || null);
+    // Cascade repeated Ctrl+V like table paste: the clipboard now holds the
+    // just-pasted areas paired with their own new tables, so pasting again
+    // offsets further out instead of restacking on the same spot.
+    areaClipboardRef.current = newAreas.map((area) => ({
+      area: structuredClone(area),
+      tables: structuredClone(newTables.filter((table) => table.areaId === area.id)),
+    }));
+  }, [permissions.canManageZones, permissions.canManageTables, pushHistory, getNextTableNumber, layoutConfig.canvasWidth, layoutConfig.canvasHeight, setAreas, setTables]);
 
   const exportVenueLayout = useCallback(() => {
     if (!permissions.canEditLayout) return;
@@ -3839,6 +4033,7 @@ const toggleAreaEditMode = useCallback(() => {
       setCanvasSettingsByR((previous) => ({ ...previous, [activeRid]: { width: Number(payload.canvas.width), height: Number(payload.canvas.height) } }));
     }
     setSelectedAreaId(null);
+    setSelectedAreaIds([]);
     setSelectedTableId(null);
     return { ok: true, message: `${layoutConfig.name} layout imported successfully.` };
   }, [activeRid, layoutConfig.name, permissions.canEditLayout, setAreas, setTables, updateVenueOperations]);
@@ -3851,6 +4046,7 @@ const toggleAreaEditMode = useCallback(() => {
     setServersByR((previous) => ({ ...previous, [activeRid]: [] }));
     setGroupsByR((previous) => ({ ...previous, [activeRid]: [] }));
     setSelectedAreaId(null);
+    setSelectedAreaIds([]);
     setSelectedTableId(null);
   }, [activeRid, layoutConfig.name, permissions.canEditLayout, setAreas, setTables]);
 
@@ -3925,7 +4121,7 @@ const toggleAreaEditMode = useCallback(() => {
     setViewSettingsByRestaurant((previous) => ({ ...previous, [id]: { zoom: Math.min(1, Math.max(0.25, 1200 / width)), showGrid: true, tableNumberSize: "medium", capacitySize: "large", tableTextColor: "white", accessibilityMode: false, showTableNumbers: true, showPax: true, showAreaLabels: true, showServerNames: true, showCelebrations: true, highlightEmptyTables: false, highlightTableNumbers: false, sidebarCollapsed: false, inspectorCollapsed: false, operationsView: false, headerCollapsed: false, showOccupancyWidget: true, pan: { x: 0, y: 0 } } }));
     setHistoryByR((previous) => ({ ...previous, [id]: [] })); setFutureByR((previous) => ({ ...previous, [id]: [] }));
     setBlueprintsByR((previous) => ({ ...previous, [id]: { dataUrl: null, opacity: 0.35, visible: true } }));
-    setActiveRid(id); setSelectedTableId(null); setSelectedAreaId(null); setVenueManagerOpen(false); setVenueManagerPreset(null);
+    setActiveRid(id); setSelectedTableId(null); setSelectedAreaId(null); setSelectedAreaIds([]); setVenueManagerOpen(false); setVenueManagerPreset(null);
 
     // Roles below admin/developer/director only see venues explicitly listed
     // in their own profile.venueIds — grant the creator access to their new
@@ -4009,6 +4205,7 @@ const toggleAreaEditMode = useCallback(() => {
           setActiveRid(restaurantId);
           setSelectedTableId(null);
           setSelectedAreaId(null);
+          setSelectedAreaIds([]);
           setAreaEditMode(false);
         }}
         onSignOut={signOutEmployee}
@@ -4209,18 +4406,23 @@ const toggleAreaEditMode = useCallback(() => {
             <AreaEditor
               areas={areas}
               selectedArea={selectedArea}
+              selectedAreaIds={selectedAreaIds}
               editMode={areaEditMode}
               canManage={permissions.canManageZones}
               onToggleEditMode={toggleAreaEditMode}
-              onSelect={(id) => {
-                setSelectedAreaId(id);
+              onSelect={(id, event) => {
+                selectArea(id, event);
                 setSelectedTableId(null);
               }}
               onUpdate={updateArea}
               onAdd={addArea}
               onDuplicate={duplicateArea}
+              onDuplicateWithTables={duplicateAreaWithTables}
               onDelete={deleteArea}
               onReset={resetAreas}
+              onCopy={copySelectedAreas}
+              onPaste={pasteSelectedAreas}
+              onDeleteSelected={deleteSelectedAreas}
             />
           )}
 
@@ -4238,6 +4440,7 @@ const toggleAreaEditMode = useCallback(() => {
               onSelectTable={(id) => { setAreaEditMode(false); setSelectedTableId(id); }}
               onSelectArea={(id) => {
                 setSelectedAreaId(id);
+                setSelectedAreaIds(id ? [id] : []);
                 if (id) setSelectedTableId(null);
               }}
               onGenerateTables={generateBulkTables}
@@ -4421,12 +4624,14 @@ const toggleAreaEditMode = useCallback(() => {
             layoutConfig={layoutConfig}
             areas={areas}
             selectedAreaId={selectedAreaId}
+            selectedAreaIds={selectedAreaIds}
             areaEditMode={areaEditMode}
-            onSelectArea={(id) => {
-              setSelectedAreaId(id);
+            onSelectArea={(id, event) => {
+              selectArea(id, event);
               if (id) setSelectedTableId(null);
             }}
             onUpdateArea={updateArea}
+            onMoveArea={moveArea}
             tables={tables}
             servers={servers}
             groups={groups}
