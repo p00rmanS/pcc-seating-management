@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import React, { useState, useMemo, useCallback, useEffect, useRef, lazy, Suspense } from "react";
 import { loadLocalSnapshot, saveLocalSnapshot } from "./utils/localPersistence";
 import {
   getClientId,
@@ -23,13 +23,8 @@ import InspectorPanel from "./components/layout/InspectorPanel";
 import WorkspaceFooter from "./components/layout/WorkspaceFooter";
 import ActivityPanel from "./components/operations/ActivityPanel";
 import CapacityPanel from "./components/operations/CapacityPanel";
-import VenueDesignerPanel from "./components/designer/VenueDesignerPanel";
-import DailyStaffingPanel from "./components/operations/DailyStaffingPanel";
-import HelpPanel from "./components/operations/HelpPanel";
 import LiveOperationsDashboard from "./components/operations/LiveOperationsDashboard";
-import DailyOperationsHub from "./components/operations/DailyOperationsHub";
 import MyTablesBar from "./components/operations/MyTablesBar";
-import TestingPanel from "./components/testing/TestingPanel";
 import "./styles/workspace.css";
 import { signOutEmployee, subscribeToAuthSession, grantOwnVenueAccess } from "./services/auth/authService";
 import {
@@ -78,6 +73,19 @@ import {
   ClipboardPaste,
   Layers3,
 } from "lucide-react";
+
+// Lazily loaded: these panels aren't needed for the initial paint, so splitting them
+// out of the main bundle means staff who never open "Designer" or "Testing" never pay
+// for that code. Each falls back to <PanelLoadingFallback/> while its chunk downloads.
+const VenueDesignerPanel = lazy(() => import("./components/designer/VenueDesignerPanel"));
+const DailyStaffingPanel = lazy(() => import("./components/operations/DailyStaffingPanel"));
+const HelpPanel = lazy(() => import("./components/operations/HelpPanel"));
+const DailyOperationsHub = lazy(() => import("./components/operations/DailyOperationsHub"));
+const TestingPanel = lazy(() => import("./components/testing/TestingPanel"));
+
+function PanelLoadingFallback() {
+  return <div className="panel-loading-fallback">Loading…</div>;
+}
 
 /* ============================================================
    HALE OHANA SEATING LAYOUT — pixel floor-plan edition
@@ -2358,6 +2366,12 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
   const [combineSourceId, setCombineSourceId] = useState(null);
   const canvasViewportRef = useRef({ scrollLeft: 0, scrollTop: 0, width: 900, height: 600 });
   const [greeterView, setGreeterView] = useState(false);
+  const [syncBannerDismissed, setSyncBannerDismissed] = useState(false);
+  useEffect(() => {
+    // Re-arm the banner so a fresh sync failure is never silently missed
+    // just because an earlier one was dismissed.
+    if (cloudState !== "error") setSyncBannerDismissed(false);
+  }, [cloudState]);
   useEffect(() => {
     const saved = viewSettingsByRestaurant[activeRid] || {};
     setSidebarCollapsed(Boolean(saved.sidebarCollapsed));
@@ -4202,6 +4216,16 @@ const toggleAreaEditMode = useCallback(() => {
 
   return (
     <div className={`workspace-app ${mobileFocusMode ? "mobile-focus-mode" : ""} ${greeterView ? "greeter-view-active" : ""} ${headerCollapsed ? "header-collapsed" : ""}`}>
+      {cloudState === "error" && !syncBannerDismissed && (
+        <div className="sync-error-banner" role="alert">
+          <AlertTriangle size={16} />
+          <span>Cloud sync failed — you may be viewing outdated seating data.</span>
+          <button type="button" onClick={() => retryCloudRef.current?.()}>Retry now</button>
+          <button type="button" className="sync-error-banner-dismiss" onClick={() => setSyncBannerDismissed(true)} aria-label="Dismiss">
+            <X size={15} />
+          </button>
+        </div>
+      )}
       {!mobileFocusMode && <AppHeader
         title={appModule === "operations" ? "Dining Operations" : `${layoutConfigByR[activeRid].name} Seating Layout`}
         instructions={instructions}
@@ -4276,6 +4300,7 @@ const toggleAreaEditMode = useCallback(() => {
               <ChevronRight size={17}/> Back to seating
             </button>
           </header>
+          <Suspense fallback={<PanelLoadingFallback />}>
           <DailyOperationsHub
             venueId={activeRid}
             venueName={layoutConfig.name}
@@ -4292,6 +4317,7 @@ const toggleAreaEditMode = useCallback(() => {
             showAlert={showAlert}
             showConfirm={showConfirm}
           />
+          </Suspense>
         </main>
       ) : (
       <main className={`workspace-main ${sidebarCollapsed || operationsView || mobileFocusMode || greeterView ? "sidebar-collapsed" : ""} ${inspectorCollapsed || operationsView || mobileFocusMode || greeterView ? "inspector-collapsed" : ""} ${operationsView || mobileFocusMode ? "operations-view" : ""}`}>
@@ -4441,6 +4467,7 @@ const toggleAreaEditMode = useCallback(() => {
           )}
 
           {activeTool === "designer" && (
+            <Suspense fallback={<PanelLoadingFallback />}>
             <VenueDesignerPanel
               venueId={activeRid}
               venueName={layoutConfig.name}
@@ -4474,6 +4501,7 @@ const toggleAreaEditMode = useCallback(() => {
               blueprintEditMode={blueprintEditMode}
               onToggleBlueprintEditMode={() => setBlueprintEditMode((value) => !value)}
             />
+            </Suspense>
           )}
 
           {activeTool === "activity" && (
@@ -4494,6 +4522,7 @@ const toggleAreaEditMode = useCallback(() => {
           )}
 
           {activeTool === "staffing" && (
+            <Suspense fallback={<PanelLoadingFallback />}>
             <DailyStaffingPanel
               venueId={activeRid}
               venueName={layoutConfig.name}
@@ -4508,17 +4537,18 @@ const toggleAreaEditMode = useCallback(() => {
               tables={tables}
               onCopyYesterday={copyYesterdayStaffing}
             />
+            </Suspense>
           )}
 
-          {activeTool === "help" && <HelpPanel />}
-          {activeTool === "testing" && <TestingPanel
+          {activeTool === "help" && <Suspense fallback={<PanelLoadingFallback />}><HelpPanel /></Suspense>}
+          {activeTool === "testing" && <Suspense fallback={<PanelLoadingFallback />}><TestingPanel
             canUndo={(historyByR[activeRid] || []).length > 0}
             canRedo={(futureByR[activeRid] || []).length > 0}
             onUndo={undo}
             onRedo={redo}
             onRestore={restoreSafeSnapshot}
             onExport={exportVenueLayout}
-          />}
+          /></Suspense>}
 
           {activeTool === "display" && (
             <div className="workspace-tool-content display-settings-panel">
