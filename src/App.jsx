@@ -2365,6 +2365,14 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
     setOperationsView(Boolean(saved.operationsView));
     setHeaderCollapsed(Boolean(saved.headerCollapsed));
     setShowOccupancyWidget(saved.showOccupancyWidget !== false);
+    // Mobile map / greeter focus modes are per-session, not per-venue — switching venues
+    // must never leave a manager stuck without the header, tools sidebar, or dashboard.
+    setMobileFocusMode(false);
+    setMobileInspectorOpen(false);
+    setMobileAddOpen(false);
+    setFullFloorToolsOpen(false);
+    setFullFloorInspectorOpen(false);
+    setGreeterView(false);
   }, [activeRid]);
 
   useEffect(() => {
