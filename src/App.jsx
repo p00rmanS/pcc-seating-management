@@ -2082,6 +2082,15 @@ function SeatingWorkspace({ authSession }) {
   const cloudReadyRef = useRef(false);
   const lastCloudSignatureRef = useRef("");
   const lastCloudPartsRef = useRef({});
+  // Tracks when the current pending cloud save first became dirty. On a busy
+  // venue, remote writes (e.g. another device toggling a table's status)
+  // arrive every few seconds and re-run this effect, which used to restart
+  // the save timer from zero every time — starving out slower-to-edit fields
+  // like a freshly-imported blueprint, which could sit "pending" forever and
+  // never actually reach the database. Counting elapsed time since the first
+  // dirty signature (instead of resetting it) guarantees the save still
+  // fires on schedule even under continuous remote traffic.
+  const saveDebounceStartRef = useRef(null);
   const lastLocalSignatureRef = useRef("");
 
   const initialRestaurants = useMemo(() => {
@@ -2209,6 +2218,11 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
   // through Realtime Database and the local backup like tables/areas/canvas —
   // no separate upload step needed.
   const updateBlueprint = useCallback((patch) => {
+    // Same grace window tables use (see localTableEditUntilRef below): stops
+    // an in-flight remote snapshot — e.g. someone else toggling a table's
+    // status on this venue — from overwriting this not-yet-saved blueprint
+    // edit before the debounced cloud save has a chance to persist it.
+    localTableEditUntilRef.current[activeRid] = Date.now() + 5000;
     setBlueprintsByR((previous) => ({ ...previous, [activeRid]: { ...(previous[activeRid] || {}), ...patch } }));
   }, [activeRid]);
 
@@ -2547,7 +2561,9 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
           setBlueprintsByR((previous) =>
             Object.fromEntries(restaurants.map((restaurant) => [
               restaurant.id,
-              operational[restaurant.id].blueprint || previous[restaurant.id] || { dataUrl: null, opacity: 0.35, visible: true },
+              Date.now() < (localTableEditUntilRef.current[restaurant.id] || 0)
+                ? previous[restaurant.id] ?? { dataUrl: null, opacity: 0.35, visible: true }
+                : operational[restaurant.id].blueprint || previous[restaurant.id] || { dataUrl: null, opacity: 0.35, visible: true },
             ]))
           );
         }
@@ -2594,9 +2610,19 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
       }])
     );
     const signature = JSON.stringify(operational);
-    if (signature === lastCloudSignatureRef.current) return undefined;
+    if (signature === lastCloudSignatureRef.current) {
+      saveDebounceStartRef.current = null;
+      return undefined;
+    }
 
     setCloudState("saving");
+    // Debounce by elapsed time since the edit first became dirty, not by a
+    // flat delay restarted on every effect run — this effect also re-runs on
+    // every incoming remote update (other devices editing the same venue),
+    // which would otherwise keep pushing the save out and could starve it
+    // indefinitely on a busy venue.
+    if (saveDebounceStartRef.current === null) saveDebounceStartRef.current = Date.now();
+    const delay = Math.max(150, 1800 - (Date.now() - saveDebounceStartRef.current));
     const timer = window.setTimeout(async () => {
       try {
         await Promise.all(
@@ -2615,14 +2641,16 @@ const [serversDashboardOpen, setServersDashboardOpen] = useState(false);
               .then(() => { lastCloudPartsRef.current[restaurant.id] = current; localTableEditUntilRef.current[restaurant.id] = 0; });
           })
         );
+        saveDebounceStartRef.current = null;
         lastCloudSignatureRef.current = signature;
         setLastCloudSavedAt(new Date().toISOString());
         setCloudState("live");
       } catch (error) {
+        saveDebounceStartRef.current = null;
         console.error("Unable to save to Firebase:", error);
         setCloudState(navigator.onLine ? "error" : "offline");
       }
-    }, 1800);
+    }, delay);
 
     return () => window.clearTimeout(timer);
   }, [

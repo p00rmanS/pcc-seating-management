@@ -1,7 +1,9 @@
 import {
   get,
+  limitToLast,
   onValue,
   push,
+  query,
   ref,
   serverTimestamp,
   set,
@@ -67,7 +69,7 @@ export function subscribeToAuthorizedVenues(venueIds, onData, onError) {
 
 export function subscribeToActivity(venueIds, onData, onError) {
   return onValue(
-    ref(db, `${ROOT_PATH}/activity`),
+    query(ref(db, `${ROOT_PATH}/activity`), limitToLast(150)),
     (snapshot) => {
       const rows = collectionToArray(snapshot.val())
         .filter((event) => venueIds.includes(event.venueId))
